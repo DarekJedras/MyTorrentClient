@@ -11,4 +11,5 @@ else()
 	add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 add_subdirectory(src)
