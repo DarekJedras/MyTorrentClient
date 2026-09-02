@@ -22,5 +22,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+include_directories(${CMAKE_SOURCE_DIR}/include)
+
 add_subdirectory(test)
 add_subdirectory(src)
