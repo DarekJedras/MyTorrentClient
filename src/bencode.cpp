@@ -56,7 +56,6 @@ BencodeList parse_bencode_list(const std::string& bencoded_text, size_t& begin_p
         throw;
     }
     catch (const std::exception& e) {
-        std::cout << e.what() << std::endl;
         throw ParsingError(current_pos);
     }
     begin_pos = current_pos + 1;
@@ -115,7 +114,7 @@ std::string serialize_bencode(const BencodeList& bencode_list){
     }
     return str + 'e';
 }
-
+// If the implementation of BencodeDict changes, keys might need to be sorted explicitly
 std::string serialize_bencode(const BencodeDict& bencode_dict){
     std::string str("d");
     for (const auto& [key, value] : bencode_dict){

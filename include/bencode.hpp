@@ -24,7 +24,7 @@ class ParsingError : public std::exception {
     std::string message;
 public:
     explicit ParsingError(int pos) {
-        message = "bencode parsing error at: " + std::to_string(pos);
+        message = "bencode parsing error at pos: " + std::to_string(pos);
     }
 
     const char* what() const noexcept override {
