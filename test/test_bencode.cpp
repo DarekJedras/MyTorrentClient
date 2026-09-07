@@ -10,7 +10,8 @@
 
 TEST(BencodeParseTest, ParsesIntegerCorrectly) {
     std::string input = "i42e";
-    BencodeValue result = parse_bencode(input);
+    BencodeValue result;
+    ASSERT_NO_THROW(result = bdecode(input));
 
     const auto* val = std::get_if<BencodeInt>(&result);
     ASSERT_NE(val, nullptr);
@@ -19,7 +20,8 @@ TEST(BencodeParseTest, ParsesIntegerCorrectly) {
 
 TEST(BencodeParseTest, ParsesNegativeInteger) {
     std::string input = "i-100e";
-    BencodeValue result = parse_bencode(input);
+    BencodeValue result;
+    ASSERT_NO_THROW(result = bdecode(input));
 
     const auto* val = std::get_if<BencodeInt>(&result);
     ASSERT_NE(val, nullptr);
@@ -28,7 +30,8 @@ TEST(BencodeParseTest, ParsesNegativeInteger) {
 
 TEST(BencodeParseTest, ParsesStringCorrectly) {
     std::string input = "4:wiki";
-    BencodeValue result = parse_bencode(input);
+    BencodeValue result;
+    ASSERT_NO_THROW(result = bdecode(input));
 
     const auto* val = std::get_if<BencodeString>(&result);
     ASSERT_NE(val, nullptr);
@@ -37,7 +40,8 @@ TEST(BencodeParseTest, ParsesStringCorrectly) {
 
 TEST(BencodeParseTest, ParsesListCorrectly) {
     std::string input = "l4:spami42ee";
-    BencodeValue result = parse_bencode(input);
+    BencodeValue result;
+    ASSERT_NO_THROW(result = bdecode(input));
 
     const auto* list_ptr = std::get_if<BencodeList>(&result);
     ASSERT_NE(list_ptr, nullptr);
@@ -55,7 +59,37 @@ TEST(BencodeParseTest, ParsesListCorrectly) {
 TEST(BencodeParseTest, ThrowsErrorOnInvalidFormat) {
     std::string invalid_input = "i42";
     
-    EXPECT_THROW(parse_bencode(invalid_input), std::exception);
+    EXPECT_THROW(bdecode(invalid_input), std::exception);
+}
+
+TEST(BencodeParseTest, ThrowsErrorOnIntegerWithLeadingZeros) {
+    std::string invalid_input = "i04212e";
+    
+    EXPECT_THROW(bdecode(invalid_input), std::exception);
+}
+
+TEST(BencodeParseTest, ThrowsErrorOnIntegerWithLeadingSpace) {
+    std::string invalid_input = "i 4212e";
+    
+    EXPECT_THROW(bdecode(invalid_input), std::exception);
+}
+
+TEST(BencodeParseTest, ThrowsErrorOnInvalidZeroInteger) {
+    std::string invalid_input = "i-0e";
+    
+    EXPECT_THROW(bdecode(invalid_input), std::exception);
+}
+
+TEST(BencodeParseTest, ThrowsErrorOnInvalidIntegerFormat) {
+    std::string invalid_input = "i+2e";
+    
+    EXPECT_THROW(bdecode(invalid_input), std::exception);
+}
+
+TEST(BencodeParseTest, ThrowsErrorOnInvalidDict) {
+    std::string invalid_input = "d4:spami42e3:cowl1:a1:bee";
+    
+    EXPECT_THROW(bdecode(invalid_input), std::exception);
 }
 
 // ============================================================================
@@ -64,12 +98,12 @@ TEST(BencodeParseTest, ThrowsErrorOnInvalidFormat) {
 
 TEST(BencodeSerializeTest, SerializesInteger) {
     BencodeValue val = BencodeInt{123};
-    EXPECT_EQ(serialize_bencode(val), "i123e");
+    EXPECT_EQ(bencode(val), "i123e");
 }
 
 TEST(BencodeSerializeTest, SerializesString) {
     BencodeValue val = BencodeString{"hello"};
-    EXPECT_EQ(serialize_bencode(val), "5:hello");
+    EXPECT_EQ(bencode(val), "5:hello");
 }
 
 TEST(BencodeSerializeTest, SerializesDictionaryWithSortedKeys) {
@@ -80,7 +114,7 @@ TEST(BencodeSerializeTest, SerializesDictionaryWithSortedKeys) {
     BencodeValue val = dict;
 
     std::string expected = "d3:cow3:moo4:spam4:eggse";
-    EXPECT_EQ(serialize_bencode(val), expected);
+    EXPECT_EQ(bencode(val), expected);
 }
 
 // ============================================================================
@@ -90,8 +124,8 @@ TEST(BencodeSerializeTest, SerializesDictionaryWithSortedKeys) {
 TEST(BencodeRoundTripTest, ParseAndSerializeRestoresOriginalString) {
     std::string original = "d3:cowi42e4:spaml1:a1:bee";
     
-    BencodeValue parsed = parse_bencode(original);
-    std::string reserialized = serialize_bencode(parsed);
+    BencodeValue parsed = bdecode(original);
+    std::string reserialized = bencode(parsed);
 
     EXPECT_EQ(reserialized, original);
 }

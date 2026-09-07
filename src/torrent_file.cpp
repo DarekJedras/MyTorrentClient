@@ -36,7 +36,7 @@ std::filesystem::path extract_bencode_path(const BencodeList& file_path){
 TorrentFile::TorrentFile(const std::string& bencoded_data){
     BencodeDict torrent_data;
     try {
-        BencodeValue data = parse_bencode(bencoded_data);
+        BencodeValue data = bdecode(bencoded_data);
         torrent_data = std::get<BencodeDict>(data);
     } catch (const ParsingError& e){
         throw std::runtime_error(std::string("Invalid file contents: ") + e.what());

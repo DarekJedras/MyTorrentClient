@@ -32,7 +32,7 @@ public:
     }
 };
 
-BencodeValue parse_bencode(const std::string& bencoded_text);
-std::string serialize_bencode(const BencodeValue& bencode_value);
+BencodeValue bdecode(const std::string& bencoded_text);
+std::string bencode(const BencodeValue& bencode_value);
 
 #endif
