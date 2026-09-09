@@ -15,14 +15,14 @@ TEST(TorrentFileTest, ParseSingleFileTorrentSuccessfully) {
 
     TorrentFile torrent(single_file_bencode);
 
-    EXPECT_EQ(torrent.announce, "https://torrent.ubuntu.com/announce");
-    EXPECT_FALSE(torrent.directory_name.has_value());
-    EXPECT_EQ(torrent.piece_length, 262144);
-    EXPECT_EQ(torrent.pieces, "12345678901234567890");
+    EXPECT_EQ(torrent.announce(), "https://torrent.ubuntu.com/announce");
+    EXPECT_FALSE(torrent.directory_name().has_value());
+    EXPECT_EQ(torrent.piece_length(), 262144);
+    EXPECT_EQ(torrent.pieces(), "12345678901234567890");
     
-    ASSERT_EQ(torrent.files_spec.size(), 1);
-    EXPECT_EQ(torrent.files_spec[0].filepath, "ubuntu-24.04-desktop-amd64.iso");
-    EXPECT_EQ(torrent.files_spec[0].length, 4912185344LL);
+    ASSERT_EQ(torrent.files_spec().size(), 1);
+    EXPECT_EQ(torrent.files_spec()[0].filepath(), "ubuntu-24.04-desktop-amd64.iso");
+    EXPECT_EQ(torrent.files_spec()[0].length(), 4912185344LL);
 }
 
 TEST(TorrentFileTest, ParseMultiFileTorrentSuccessfully) {
@@ -33,18 +33,18 @@ TEST(TorrentFileTest, ParseMultiFileTorrentSuccessfully) {
 
     TorrentFile torrent(multi_file_bencode);
 
-    EXPECT_EQ(torrent.announce, "https://torrent.ubuntu.com/announce");
-    ASSERT_TRUE(torrent.directory_name.has_value());
-    EXPECT_EQ(torrent.directory_name.value(), "ubuntu-files");
-    EXPECT_EQ(torrent.piece_length, 262144);
+    EXPECT_EQ(torrent.announce(), "https://torrent.ubuntu.com/announce");
+    ASSERT_TRUE(torrent.directory_name().has_value());
+    EXPECT_EQ(torrent.directory_name().value(), "ubuntu-files");
+    EXPECT_EQ(torrent.piece_length(), 262144);
 
-    ASSERT_EQ(torrent.files_spec.size(), 2);
+    ASSERT_EQ(torrent.files_spec().size(), 2);
 
-    EXPECT_EQ(torrent.files_spec[0].filepath, std::filesystem::path("release.txt"));
-    EXPECT_EQ(torrent.files_spec[0].length, 1024);
+    EXPECT_EQ(torrent.files_spec()[0].filepath(), std::filesystem::path("release.txt"));
+    EXPECT_EQ(torrent.files_spec()[0].length(), 1024);
 
-    EXPECT_EQ(torrent.files_spec[1].filepath, std::filesystem::path("docs_pdf") / "manual.pdf");
-    EXPECT_EQ(torrent.files_spec[1].length, 5242880);
+    EXPECT_EQ(torrent.files_spec()[1].filepath(), std::filesystem::path("docs_pdf") / "manual.pdf");
+    EXPECT_EQ(torrent.files_spec()[1].length(), 5242880);
 }
 
 TEST(TorrentFileTest, ThrowsOnInvalidBencodeFormat) {

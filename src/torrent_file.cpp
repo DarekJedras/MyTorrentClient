@@ -1,6 +1,8 @@
 #include <fstream>
 #include <format>
 #include <stdexcept>
+#include <openssl/evp.h>
+#include<iostream>
 #include "torrent_file.hpp"
 #include "bencode.hpp"
 
@@ -33,6 +35,35 @@ std::filesystem::path extract_bencode_path(const BencodeList& file_path){
 }
 
 
+std::string compute_sha1(std::string_view data){
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(
+        EVP_MD_CTX_new(), 
+        &EVP_MD_CTX_free
+    );
+    if (!ctx) {
+        throw std::runtime_error("Couldn't create EVP_MD_CTX context");
+    }
+
+    if (EVP_DigestInit_ex(ctx.get(), EVP_sha1(), nullptr) != 1) {
+        throw std::runtime_error("Couldn't initialize SHA-1 algorithm");
+    }
+
+    if (EVP_DigestUpdate(ctx.get(), data.data(), data.size()) != 1) {
+        throw std::runtime_error("Couldn't update SHA-1 digest state");
+    }
+
+    std::string hash(EVP_MAX_MD_SIZE, '\0');
+    unsigned int hash_len = 0;
+
+    if (EVP_DigestFinal_ex(ctx.get(), reinterpret_cast<unsigned char*>(hash.data()), &hash_len) != 1) {
+        throw std::runtime_error("Couldn't finalize SHA-1 digest");
+    }
+
+    hash.resize(hash_len);
+    return hash;
+}
+
+
 TorrentFile::TorrentFile(const std::string& bencoded_data){
     BencodeDict torrent_data;
     try {
@@ -45,24 +76,25 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
     }
 
     try {
-        announce = extract_bencode_value<BencodeString>("announce", torrent_data);
+        _announce = extract_bencode_value<BencodeString>("announce", torrent_data);
         const BencodeDict& info = extract_bencode_value<BencodeDict>("info", torrent_data);
+        _info_hash = compute_sha1(bencode(info));
 
-        piece_length = extract_bencode_value<BencodeInt>("piece length", info);
-        pieces = extract_bencode_value<BencodeString>("pieces", info);
+        _piece_length = extract_bencode_value<BencodeInt>("piece length", info);
+        _pieces = extract_bencode_value<BencodeString>("pieces", info);
         if (info.contains("length") && info.contains("files")){
             throw std::runtime_error("bencode dictionary cannot contain both \"length\" and \"files\" keys");
         }
         std::filesystem::path name(extract_bencode_value<BencodeString>("name", info));
         if (info.contains("length")){
             BencodeInt length = extract_bencode_value<BencodeInt>("length", info);
-            files_spec.emplace_back(std::move(name), length);
+            _files_spec.emplace_back(std::move(name), length);
             return;
         }
         if (info.contains("files")){
-            directory_name = std::move(name);
+            _directory_name = std::move(name);
             const BencodeList& files = extract_bencode_value<BencodeList>("files", info);
-            files_spec.reserve(files.size());
+            _files_spec.reserve(files.size());
             for (const BencodeValue& file : files){
                 const BencodeDict* file_ptr = std::get_if<BencodeDict>(&file);
                 if (!file_ptr){
@@ -70,7 +102,7 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
                 }
                 BencodeInt length = extract_bencode_value<BencodeInt>("length", *file_ptr);
                 const BencodeList& path = extract_bencode_value<BencodeList>("path", *file_ptr);
-                files_spec.emplace_back(extract_bencode_path(path), length);
+                _files_spec.emplace_back(extract_bencode_path(path), length);
             }
             return;
         }
@@ -105,20 +137,10 @@ TorrentFile read_torrent_file(const std::filesystem::path& file_name){
 }
 
 
-std::string bytes_to_hex(const std::string& bytes) {
+std::string bytes_to_hex(std::string_view bytes) {
     std::string hex;
     hex.reserve(bytes.size() * 2);
-    for (auto b : bytes){
-        hex += std::format("{:02x}", b);
-    }
-    return hex;
-}
-
-
-std::string bytes_to_hex(const std::string_view& bytes) {
-    std::string hex;
-    hex.reserve(bytes.size() * 2);
-    for (auto b : bytes){
+    for (unsigned char b : bytes){
         hex += std::format("{:02x}", b);
     }
     return hex;
@@ -130,24 +152,24 @@ std::string get_file_description(const TorrentFile& file, bool print_pieces){
         "URl: {}\n"
         "Info Hash: {}\n"
         "Pieces Length: {}\n",
-        file.announce, "Not implemented", file.piece_length
+        file.announce(), bytes_to_hex(file.info_hash()), file.piece_length()
     );
 
-    if (!file.directory_name.has_value()){
-        const auto& filespec = file.files_spec.front();
-        desc += std::format("File: {} of size: {}\n", filespec.filepath.native(), filespec.length);
+    if (!file.directory_name().has_value()){
+        const auto& filespec = file.files_spec().front();
+        desc += std::format("File: {} of size: {}\n", filespec.filepath().string(), filespec.length());
     } else {
-        desc += std::format("Directory: {}\n\nContents:\n", file.directory_name.value().native());
-        for (const auto& filespec : file.files_spec){
-            desc += std::format("File: {} of size: {}\n", filespec.filepath.native(), filespec.length);
+        desc += std::format("Directory: {}\n\nContents:\n", file.directory_name().value().string());
+        for (const auto& filespec : file.files_spec()){
+            desc += std::format("File: {} of size: {}\n", filespec.filepath().string(), filespec.length());
         }
     }
 
     if (print_pieces){
         desc += "\nPieces: \n";
-        std::string_view pieces = file.pieces;
-        size_t segment_idx = 1;
-        for (size_t offset = 0; offset < file.pieces.length(); offset += 20){
+        std::string_view pieces = file.pieces();
+        size_t segment_idx = 0;
+        for (size_t offset = 0; offset < file.pieces().length(); offset += 20){
             desc += std::format("{:6>}: {}\n", segment_idx++, bytes_to_hex(pieces.substr(offset, 20)));
         }
     }
