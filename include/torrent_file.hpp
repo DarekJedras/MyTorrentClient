@@ -6,6 +6,8 @@
 #include <optional>
 #include <vector>
 
+namespace torrent {
+
 class FileSpec {
     std::filesystem::path _filepath;
     int64_t _length;
@@ -36,5 +38,7 @@ public:
 
 TorrentFile read_torrent_file(const std::filesystem::path& file_name);
 std::string get_file_description(const TorrentFile& file, bool print_pieces = false);
+
+} // namespace torrent
 
 #endif

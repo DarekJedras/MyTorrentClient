@@ -6,21 +6,7 @@
 #include "torrent_file.hpp"
 #include "bencode.hpp"
 
-
-template<typename T>
-const T& extract_bencode_value(const BencodeString& key, const BencodeDict& dict){
-    auto it = dict.find(key);
-    if (it == dict.end()) {
-        throw std::runtime_error("missing key in bencode dictionary: " + key);
-    }
-
-    if (const T* ptr = std::get_if<T>(&it->second)) {
-        return *ptr;
-    }
-
-    throw std::runtime_error("invalid data type for key: " + key);
-}
-
+namespace torrent {
 
 std::filesystem::path extract_bencode_path(const BencodeList& file_path){
     std::filesystem::path path;
@@ -33,7 +19,6 @@ std::filesystem::path extract_bencode_path(const BencodeList& file_path){
     }
     return path;
 }
-
 
 std::string compute_sha1(std::string_view data){
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(
@@ -62,7 +47,6 @@ std::string compute_sha1(std::string_view data){
     hash.resize(hash_len);
     return hash;
 }
-
 
 TorrentFile::TorrentFile(const std::string& bencoded_data){
     BencodeDict torrent_data;
@@ -113,7 +97,6 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
     }
 }
 
-
 std::string read_file(const std::filesystem::path& file_name){
     std::ifstream file(file_name, std::ios::binary | std::ios::ate);
     if (!file.good()){
@@ -130,12 +113,10 @@ std::string read_file(const std::filesystem::path& file_name){
     return buffer;
 }
 
-
 TorrentFile read_torrent_file(const std::filesystem::path& file_name){
     std::string bencoded_data = read_file(file_name);
     return TorrentFile(bencoded_data);
 }
-
 
 std::string bytes_to_hex(std::string_view bytes) {
     std::string hex;
@@ -145,7 +126,6 @@ std::string bytes_to_hex(std::string_view bytes) {
     }
     return hex;
 }
-
 
 std::string get_file_description(const TorrentFile& file, bool print_pieces){
     std::string desc = std::format(
@@ -175,3 +155,5 @@ std::string get_file_description(const TorrentFile& file, bool print_pieces){
     }
     return desc;
 }
+
+} // namespace torrent

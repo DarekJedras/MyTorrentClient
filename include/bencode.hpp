@@ -7,7 +7,7 @@
 #include <map>
 #include <cstdint>
 #include <exception>
-
+#include <stdexcept>
 
 struct BencodeValue;
 
@@ -34,5 +34,19 @@ public:
 
 BencodeValue bdecode(const std::string& bencoded_text);
 std::string bencode(const BencodeValue& bencode_value);
+
+template<typename T>
+const T& extract_bencode_value(const BencodeString& key, const BencodeDict& dict){
+    auto it = dict.find(key);
+    if (it == dict.end()) {
+        throw std::runtime_error("missing key in bencode dictionary: " + key);
+    }
+
+    if (const T* ptr = std::get_if<T>(&it->second)) {
+        return *ptr;
+    }
+
+    throw std::runtime_error("invalid data type for key: " + key);
+}
 
 #endif
