@@ -144,6 +144,9 @@ inline std::string get_tracker_response(const ParsedURL& url, const TrackerReque
     if (!result) {
         throw std::runtime_error("couldn't reach tracker");
     }
+    if (result.value().status >= 400) {
+        throw std::runtime_error("couldn't reach tracker: code " + std::to_string(result.value().status));
+    }
     return result.value().body;
 }
 
