@@ -3,6 +3,7 @@
 
 #include <random>
 #include <bit>
+#include <cstring>
 
 namespace torrent::utils {
 
