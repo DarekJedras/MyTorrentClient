@@ -26,22 +26,22 @@ std::string compute_sha1(std::string_view data){
         &EVP_MD_CTX_free
     );
     if (!ctx) {
-        throw std::runtime_error("Couldn't create EVP_MD_CTX context");
+        throw std::runtime_error("couldn't create EVP_MD_CTX context");
     }
 
     if (EVP_DigestInit_ex(ctx.get(), EVP_sha1(), nullptr) != 1) {
-        throw std::runtime_error("Couldn't initialize SHA-1 algorithm");
+        throw std::runtime_error("couldn't initialize SHA-1 algorithm");
     }
 
     if (EVP_DigestUpdate(ctx.get(), data.data(), data.size()) != 1) {
-        throw std::runtime_error("Couldn't update SHA-1 digest state");
+        throw std::runtime_error("couldn't update SHA-1 digest state");
     }
 
     std::string hash(EVP_MAX_MD_SIZE, '\0');
     unsigned int hash_len = 0;
 
     if (EVP_DigestFinal_ex(ctx.get(), reinterpret_cast<unsigned char*>(hash.data()), &hash_len) != 1) {
-        throw std::runtime_error("Couldn't finalize SHA-1 digest");
+        throw std::runtime_error("couldn't finalize SHA-1 digest");
     }
 
     hash.resize(hash_len);
@@ -54,9 +54,9 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
         BencodeValue data = bdecode(bencoded_data);
         torrent_data = std::get<BencodeDict>(data);
     } catch (const ParsingError& e){
-        throw std::runtime_error(std::string("Invalid file contents: ") + e.what());
+        throw std::runtime_error(std::string("invalid file contents: ") + e.what());
     } catch (const std::bad_variant_access&){
-        throw std::runtime_error("Invalid file contents: expected bencode dict");
+        throw std::runtime_error("invalid file contents: expected bencode dict");
     }
 
     try {
@@ -66,6 +66,9 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
 
         _piece_length = extract_bencode_value<BencodeInt>("piece length", info);
         _pieces = extract_bencode_value<BencodeString>("pieces", info);
+        if (_pieces.size() % 20 != 0){
+            throw std::runtime_error("\"pieces\" length should be multiple of 20");
+        }
         if (info.contains("length") && info.contains("files")){
             throw std::runtime_error("bencode dictionary cannot contain both \"length\" and \"files\" keys");
         }
@@ -73,9 +76,13 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
         if (info.contains("length")){
             BencodeInt length = extract_bencode_value<BencodeInt>("length", info);
             _files_spec.emplace_back(std::move(name), length);
+            if (_pieces.size() / 20 != length / _piece_length + (length % _piece_length != 0 ? 1 : 0)){
+                throw std::runtime_error("invalid \"pieces\" length");
+            }
             return;
         }
         if (info.contains("files")){
+            uint64_t total_length = 0;
             _directory_name = std::move(name);
             const BencodeList& files = extract_bencode_value<BencodeList>("files", info);
             _files_spec.reserve(files.size());
@@ -87,6 +94,10 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
                 BencodeInt length = extract_bencode_value<BencodeInt>("length", *file_ptr);
                 const BencodeList& path = extract_bencode_value<BencodeList>("path", *file_ptr);
                 _files_spec.emplace_back(extract_bencode_path(path), length);
+                total_length += length;
+            }
+            if (_pieces.size() / 20 != total_length / _piece_length + (total_length % _piece_length != 0 ? 1 : 0)){
+                throw std::runtime_error("invalid \"pieces\" length");
             }
             return;
         }
@@ -100,7 +111,7 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
 std::string read_file(const std::filesystem::path& file_name){
     std::ifstream file(file_name, std::ios::binary | std::ios::ate);
     if (!file.good()){
-        throw std::runtime_error("Couldn't open file: " + file_name.string());
+        throw std::runtime_error("couldn't open file: " + file_name.string());
     }
     std::string buffer;
     const auto file_size = file.tellg();
@@ -108,7 +119,7 @@ std::string read_file(const std::filesystem::path& file_name){
     file.seekg(0, std::ios::beg);
     file.read(buffer.data(), file_size);
     if (file.gcount() < file_size){
-        throw std::runtime_error("Couldn't read file: " + file_name.string());
+        throw std::runtime_error("couldn't read file: " + file_name.string());
     }
     return buffer;
 }

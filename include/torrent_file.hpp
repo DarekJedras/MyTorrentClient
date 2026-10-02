@@ -8,6 +8,8 @@
 
 namespace torrent {
 
+using Hash20 = std::array<char, 20>;
+
 class FileSpec {
     std::filesystem::path _filepath;
     int64_t _length;
