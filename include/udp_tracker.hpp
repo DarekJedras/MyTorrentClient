@@ -17,7 +17,7 @@ struct ConnectRequest {
     uint32_t action = 0; // connect
     uint32_t transaction_id; // to be randomly generated
 
-    std::array<uint8_t, 16> serialize() const;
+    std::array<char, 16> serialize() const;
 };
 
 struct ConnectResponse {
@@ -27,7 +27,7 @@ struct ConnectResponse {
     std::optional<std::string> error_msg;
 
     // returns true if deserialization completed succesfully, false otherwise
-    bool deserialize(const uint8_t* data, size_t bytes_length);
+    bool deserialize(const char* data, size_t bytes_length);
 };
 // sends request and process tracker response, generates request data itself
 // requires socket to be opened and connected to tracker endpoint
@@ -37,8 +37,8 @@ struct AnnounceRequest {
     uint64_t connection_id;
     uint32_t action = 1; // announce
     uint32_t transaction_id; // randomly generated
-    std::array<uint8_t, 20> info_hash;
-    std::array<uint8_t, 20> peer_id;
+    Hash20 info_hash;
+    PeerId peer_id;
     uint64_t downloaded;
     uint64_t left;
     uint64_t uploaded;
@@ -48,7 +48,7 @@ struct AnnounceRequest {
     int32_t num_want = -1;
     uint16_t port;
 
-    std::array<uint8_t, 98> serialize() const;
+    std::array<char, 98> serialize() const;
 };
 
 using PeersListv4 = std::vector<std::pair<uint32_t, uint16_t>>;
@@ -65,7 +65,7 @@ struct AnnounceResponse {
 
     // returns true if deserialization completed succesfully, false otherwise
     // proto has to indicate either IPv4 or IPv6 protocol
-    bool deserialize(const uint8_t* data, size_t bytes_length, asio_udp proto);
+    bool deserialize(const char* data, size_t bytes_length, asio_udp proto);
 };
 
 // sends request and process tracker response, generates transaction_id itself,

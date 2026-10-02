@@ -90,8 +90,8 @@ std::vector<PeerInfo> Tracker::parse_peers_list(const BencodeValue& peers_bencod
                 throw std::runtime_error("invalid peers list format");
             }
 
-            const uint8_t* data = reinterpret_cast<const uint8_t*>(peers_list.data());
-            const uint8_t* end = data + peers_list.size();
+            const char* data = (peers_list.data());
+            const char* end = data + peers_list.size();
             while (data < end){
                 std::string ip_str;
                 if (is_peers6){

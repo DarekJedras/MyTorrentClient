@@ -8,11 +8,11 @@
 
 namespace torrent::udp {
 
-constexpr size_t UDP_BUFFER_SIZE = 2048;
+constexpr size_t UDP_BUFFER_SIZE = 1024;
 
-std::array<uint8_t, 16> ConnectRequest::serialize() const {
-    std::array<uint8_t, 16> buffer;
-    uint8_t* buf_ptr = buffer.data();
+std::array<char, 16> ConnectRequest::serialize() const {
+    std::array<char, 16> buffer;
+    char* buf_ptr = buffer.data();
 
     utils::write_net_buffer(buf_ptr, protocol_id);
     utils::write_net_buffer(buf_ptr, action);
@@ -20,7 +20,7 @@ std::array<uint8_t, 16> ConnectRequest::serialize() const {
     return buffer;
 }
 
-bool ConnectResponse::deserialize(const uint8_t* data, size_t bytes_length){
+bool ConnectResponse::deserialize(const char* data, size_t bytes_length){
     if (bytes_length < 16){
         return false;
     }
@@ -29,7 +29,7 @@ bool ConnectResponse::deserialize(const uint8_t* data, size_t bytes_length){
     if (action == 0){
         connection_id = utils::read_net_buffer<uint64_t>(data);
     } else if (action == 3){
-        error_msg = std::string(reinterpret_cast<const char*>(data), bytes_length - 8);
+        error_msg = std::string(data, bytes_length - 8);
     }
     else {
         return false;
@@ -49,7 +49,7 @@ std::optional<ConnectResponse> get_connect_response(asio_udp::socket& socket){
     socket.send(asio::buffer(request.serialize()));
 
     asio_udp::endpoint sender_endpoint; // to be deleted
-    std::array<uint8_t, UDP_BUFFER_SIZE> recv_buffer;
+    std::array<char, UDP_BUFFER_SIZE> recv_buffer;
     ConnectResponse response;
     size_t recv_bytes = socket.receive_from(asio::buffer(recv_buffer), sender_endpoint);
     if (response.deserialize(recv_buffer.data(), recv_bytes)){
@@ -61,9 +61,9 @@ std::optional<ConnectResponse> get_connect_response(asio_udp::socket& socket){
     return std::optional<ConnectResponse>();
 }
 
-std::array<uint8_t, 98> AnnounceRequest::serialize() const {
-    std::array<uint8_t, 98> buffer;
-    uint8_t* buf_ptr = buffer.data();
+std::array<char, 98> AnnounceRequest::serialize() const {
+    std::array<char, 98> buffer;
+    char* buf_ptr = buffer.data();
 
     utils::write_net_buffer(buf_ptr, connection_id);
     utils::write_net_buffer(buf_ptr, action);
@@ -83,7 +83,7 @@ std::array<uint8_t, 98> AnnounceRequest::serialize() const {
     return buffer;
 }
 
-bool AnnounceResponse::deserialize(const uint8_t* data, size_t bytes_length, asio_udp proto){
+bool AnnounceResponse::deserialize(const char* data, size_t bytes_length, asio_udp proto){
     if (
         bytes_length < 20 ||
         (proto == asio_udp::v4() && (bytes_length - 20) % 6 != 0) ||
@@ -92,7 +92,7 @@ bool AnnounceResponse::deserialize(const uint8_t* data, size_t bytes_length, asi
         return false;
     }
 
-    const uint8_t* data_end = data + bytes_length;
+    const char* data_end = data + bytes_length;
     action = utils::read_net_buffer<uint32_t>(data);
     transaction_id = utils::read_net_buffer<uint32_t>(data);
     if (action == 3){
@@ -134,12 +134,12 @@ std::optional<AnnounceResponse> get_announce_response(const AnnounceRequest& req
         throw std::logic_error("socket must be opened in valid protocol and connected to endpoint");
     }
 
-    std::array<uint8_t, 98> request_data = request.serialize();
+    std::array<char, 98> request_data = request.serialize();
     size_t bytes_send = socket.send(asio::buffer(request_data));
     std::cout << "sent " << bytes_send << " bytes of announce request" << std::endl;
 
     asio_udp::endpoint sender_endpoint; // to be deleted
-    std::array<uint8_t, UDP_BUFFER_SIZE> recv_buffer;
+    std::array<char, UDP_BUFFER_SIZE> recv_buffer;
     AnnounceResponse response;
     size_t recv_bytes = socket.receive_from(asio::buffer(recv_buffer), sender_endpoint);
     if (response.deserialize(recv_buffer.data(), recv_bytes, proto)){
@@ -153,13 +153,13 @@ std::optional<AnnounceResponse> get_announce_response(const AnnounceRequest& req
 
 AnnounceResponse get_tracker_response(const ParsedURL& parsed_url, const TrackerRequest& request){
     AnnounceRequest request_data = {
-        .info_hash = std::bit_cast<std::array<uint8_t, 20>>(request.info_hash),
-        .peer_id = std::bit_cast<std::array<uint8_t, 20>>(request.peer_id),
+        .info_hash = request.info_hash,
+        .peer_id = request.peer_id,
         .downloaded = request.downloaded,
         .left = request.left,
         .uploaded = request.uploaded,
         .event = std::to_underlying(request.event),
-        .key = 0,
+        .key = request.key,
         .port = request.port
     };
 

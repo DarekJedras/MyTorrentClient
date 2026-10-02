@@ -15,7 +15,7 @@ namespace torrent::utils {
     }
 
     template <typename T>
-    void write_net_buffer(uint8_t*& buf_ptr, T int_value){
+    void write_net_buffer(char*& buf_ptr, T int_value){
         if constexpr (std::endian::native == std::endian::little){
             int_value = std::byteswap(int_value);
         }
@@ -25,7 +25,7 @@ namespace torrent::utils {
     }
 
     template <typename T>
-    T read_net_buffer(const uint8_t*& buf_ptr) {
+    T read_net_buffer(const char*& buf_ptr) {
         T value;
         std::memcpy(&value, buf_ptr, sizeof(T)); 
         buf_ptr += sizeof(T);
