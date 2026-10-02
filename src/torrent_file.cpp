@@ -20,7 +20,7 @@ std::filesystem::path extract_bencode_path(const BencodeList& file_path){
     return path;
 }
 
-std::string compute_sha1(std::string_view data){
+Hash20 compute_sha1(std::string_view data){
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(
         EVP_MD_CTX_new(), 
         &EVP_MD_CTX_free
@@ -37,14 +37,17 @@ std::string compute_sha1(std::string_view data){
         throw std::runtime_error("couldn't update SHA-1 digest state");
     }
 
-    std::string hash(EVP_MAX_MD_SIZE, '\0');
+    Hash20 hash;
     unsigned int hash_len = 0;
 
     if (EVP_DigestFinal_ex(ctx.get(), reinterpret_cast<unsigned char*>(hash.data()), &hash_len) != 1) {
         throw std::runtime_error("couldn't finalize SHA-1 digest");
     }
 
-    hash.resize(hash_len);
+    if (hash_len != hash.size()){
+        throw std::runtime_error("unexpected SHA-1 digest length");
+    }
+
     return hash;
 }
 
@@ -82,7 +85,7 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
             return;
         }
         if (info.contains("files")){
-            uint64_t total_length = 0;
+            BencodeInt total_length = 0;
             _directory_name = std::move(name);
             const BencodeList& files = extract_bencode_value<BencodeList>("files", info);
             _files_spec.reserve(files.size());
@@ -128,8 +131,8 @@ TorrentFile read_torrent_file(const std::filesystem::path& file_name){
     std::string bencoded_data = read_file(file_name);
     return TorrentFile(bencoded_data);
 }
-
-std::string bytes_to_hex(std::string_view bytes) {
+template<typename T>
+std::string bytes_to_hex(T bytes) {
     std::string hex;
     hex.reserve(bytes.size() * 2);
     for (unsigned char b : bytes){

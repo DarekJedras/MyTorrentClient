@@ -3,6 +3,8 @@
 #include "asio.hpp"
 #include "udp_tracker.hpp"
 #include "utils.hpp"
+#include "peer.hpp"
+#include <optional>
 
 namespace torrent {
 
@@ -103,15 +105,22 @@ std::vector<PeerInfo> Tracker::parse_peers_list(const BencodeValue& peers_bencod
                 }
 
                 uint16_t port = utils::read_net_buffer<uint16_t>(data);
-                peers.emplace_back(std::move(ip_str), port);
+                peers.emplace_back(std::move(ip_str), std::optional<PeerId>(), port);
             }
         } else if constexpr(std::is_same_v<BencodeType, BencodeList>){
             try{
                 for (const auto& value : peers_list){
                     const BencodeDict& peer_dict = std::get<BencodeDict>(value);
                     const BencodeString& ip = extract_bencode_value<BencodeString>("ip", peer_dict);
+                    const BencodeString& peer_id = extract_bencode_value<BencodeString>("peer id", peer_dict);
+                    if (peer_id.size() != 20){
+                        throw std::runtime_error("invalid peers list format");
+                    }
+                    PeerId peer_id_arr{};
+                    std::memcpy(&peer_id_arr, peer_id.data(), 20);
+
                     BencodeInt port = extract_bencode_value<BencodeInt>("port", peer_dict);
-                    peers.emplace_back(ip, port);
+                    peers.emplace_back(ip, peer_id_arr, port);
                 }
             }
             catch (...){
@@ -164,7 +173,7 @@ TrackerResponse parse_tracker_response(const BencodeDict& response){
     if (response.contains("peers6"))
         peers = Tracker::parse_peers_list(response.at("peers6"), true);
     else 
-        peers = Tracker::parse_peers_list(response.at("peers"));
+        peers = Tracker::parse_peers_list(response.at("peers"), false);
 
     return {
         .interval = interval,

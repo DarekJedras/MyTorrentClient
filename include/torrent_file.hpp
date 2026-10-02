@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <vector>
+#include <array>
 
 namespace torrent {
 
@@ -24,14 +25,14 @@ class TorrentFile {
     std::optional<std::filesystem::path> _directory_name;
     std::string _announce;
     std::string _pieces;
-    std::string _info_hash;
     std::vector<FileSpec> _files_spec;
     int64_t _piece_length = 0;
+    Hash20 _info_hash;
 public:
     const std::optional<std::filesystem::path>& directory_name() const {return _directory_name;}
     const std::string& announce() const {return _announce;}
     const std::string& pieces() const {return _pieces;}
-    const std::string& info_hash() const {return _info_hash;}
+    const Hash20& info_hash() const {return _info_hash;}
     const std::vector<FileSpec>& files_spec() const {return _files_spec;}
     int64_t piece_length() const {return _piece_length;}
 

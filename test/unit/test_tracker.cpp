@@ -194,16 +194,24 @@ TEST(TrackerPeersTest, IPv4BencodeListFormat1) {
 
     EXPECT_EQ(peers[0].ip, "127.0.0.1");
     EXPECT_EQ(peers[0].port, 6881);
-    // EXPECT_EQ(peers[0].peer_id, "-UT3530-123456789012");
+    EXPECT_EQ(std::string(peers[0].peer_id.value().data(), 20), "-UT3530-123456789012"s);
 
     EXPECT_EQ(peers[1].ip, "8.8.8.8");
     EXPECT_EQ(peers[1].port, 80);
-    // EXPECT_EQ(peers[1].peer_id, "-TR2940-987654321098");
+    EXPECT_EQ(std::string(peers[1].peer_id.value().data(), 20), "-TR2940-987654321098"s);
 }
 
 TEST(TrackerPeersTest, IPv4BencodeListFormat2) {
-    BencodeDict peer1{{"ip", BencodeString("10.0.0.1")}, {"port", static_cast<BencodeInt>(80)}};
-    BencodeDict peer2{{"ip", BencodeString("172.16.0.1")}, {"port", static_cast<BencodeInt>(443)}};
+    BencodeDict peer1{
+        {"ip", BencodeString("10.0.0.1")},
+        {"port", static_cast<BencodeInt>(80)},
+        {"peer id", BencodeString("-TR\r\n \t987654Bde\x00""098"s)}
+    };
+    BencodeDict peer2{
+        {"ip", BencodeString("172.16.0.1")},
+        {"port", static_cast<BencodeInt>(443)},
+        {"peer id", BencodeString("-TRaa0-987654Bde\x00""098"s)}
+    };
     
     BencodeList list{peer1, peer2};
     BencodeValue value = list;
@@ -213,12 +221,20 @@ TEST(TrackerPeersTest, IPv4BencodeListFormat2) {
     ASSERT_EQ(peers.size(), 2);
     EXPECT_EQ(peers[0].ip, "10.0.0.1");
     EXPECT_EQ(peers[0].port, 80);
+    ASSERT_TRUE(peers[0].peer_id.has_value());
+    EXPECT_EQ(std::string(peers[0].peer_id.value().data(), 20), "-TR\r\n \t987654Bde\x00""098"s);
     EXPECT_EQ(peers[1].ip, "172.16.0.1");
     EXPECT_EQ(peers[1].port, 443);
+    ASSERT_TRUE(peers[1].peer_id.has_value());
+    EXPECT_EQ(std::string(peers[1].peer_id.value().data(), 20), "-TRaa0-987654Bde\x00""098"s);
 }
 
 TEST(TrackerPeersTest, IPv6BencodeListFormat) {
-    BencodeDict peer1{{"ip", BencodeString("2001:db8::8a2e:370:7334")}, {"port", static_cast<BencodeInt>(6881)}};
+    BencodeDict peer1{
+        {"ip", BencodeString("2001:db8::8a2e:370:7334")},
+        {"port", static_cast<BencodeInt>(6881)},
+        {"peer id", BencodeString("-12345\x14""987654Bde\x00""098"s)}
+    };
     
     BencodeList list{peer1};
     BencodeValue value = list;

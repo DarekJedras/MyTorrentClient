@@ -6,6 +6,7 @@ FetchContent_Declare(
 )
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
+include(GoogleTest)
 
 add_executable(unit_tests
     unit/test_bencode.cpp
@@ -17,6 +18,7 @@ target_link_libraries(unit_tests PRIVATE
     GTest::gtest_main
     bencode
     torrent_core
+    asio
 )
 
 add_executable(integration_tests
@@ -27,8 +29,8 @@ target_link_libraries(integration_tests PRIVATE
     GTest::gtest_main
     httplib::httplib
     torrent_core
+    asio
 )
 
-include(GoogleTest)
 gtest_discover_tests(unit_tests)
 gtest_discover_tests(integration_tests)

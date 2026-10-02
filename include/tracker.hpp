@@ -9,6 +9,7 @@
 #include <array>
 #include "peer.hpp"
 #include "bencode.hpp"
+#include "torrent_file.hpp"
 
 namespace torrent {
 
@@ -29,8 +30,8 @@ enum class TrackerEvent : uint32_t {
 std::string_view to_string(TrackerEvent event) noexcept;
 
 struct TrackerRequest {
-    std::array<char, 20> info_hash;
-    std::array<char, 20> peer_id;
+    Hash20 info_hash;
+    PeerId peer_id;
     uint64_t uploaded{0};
     uint64_t downloaded{0};
     uint64_t left{0};
