@@ -4,10 +4,12 @@
 #include <string>
 #include <cstdint>
 #include <optional>
-#include <memory>
 #include <vector>
 #include <functional>
-#include <asio.hpp>
+#include <array>
+#include <deque>
+#include <span>
+#include "asio.hpp"
 #include "torrent_file.hpp"
 
 namespace torrent {
@@ -20,7 +22,7 @@ struct PeerInfo {
     uint16_t port;
 };
 
-enum class PeerMessageType : uint8_t {
+enum class PeerMessageType : char {
     CHOKE = 0,
     UNCHOKE = 1,
     INTERESTED = 2,
@@ -32,39 +34,77 @@ enum class PeerMessageType : uint8_t {
     CANCEL = 8
 };
 
-struct PeerMessage {
-    std::vector<uint8_t> payload;
-    PeerMessageType type;
-};
-
-using PeerRecvHandler = std::function<void(asio::error_code, PeerMessage)>;
-using PeerHandshakeHandler = std::function<void(asio::error_code, Hash20)>;
-using PeerErrorHandler = std::function<void(asio::error_code)>;
+struct PeerMessage;
 
 class Peer {
-    std::optional<std::string> peer_id;
-    asio::ip::tcp::socket socket;
+    // all handlers should check whether error occured and behave accordingly
+public:
+    using RecvHandler = std::function<void(asio::error_code, PeerMessage, Peer&, bool handler_ignored)>;
+    using HandshakeHandler = std::function<void(asio::error_code, const Hash20&, const PeerId&, Peer&)>;
+    using ErrorHandler = std::function<void(asio::error_code, Peer&)>;
 
-    bool _am_chocked = true;
+private:
+    using ShortMsgBuffer = std::array<char, 20>;
+    using MessageBuffer = std::variant<Peer::ShortMsgBuffer, std::vector<char>>; // array must be first in types list
+    using PendingSend = std::pair<MessageBuffer, std::function<void(asio::error_code, size_t)>>;
+
+    asio::ip::tcp::socket _socket;
+    asio::error_code _ec;
+
+    std::deque<PendingSend> _send_queue;
+    std::deque<MessageBuffer> _recv_queue;
+
+    std::optional<RecvHandler> _pending_read;
+
+    bool _am_choked = true;
     bool _am_interested = false;
 
-    bool _is_chocked = true;
+    bool _is_choked = true;
     bool _is_interested = false;
+
+    // designed to be called inside execution context (as tasks or callbacks)
+    void store_received_msg(asio::error_code ec, size_t);
+    // designed to be called inside execution context (as tasks or callbacks)
+    void send_stored_msg(asio::error_code ec, size_t);
+
+// all public functions are designed to be called from outside the execution context
+// and delegate asynchronous task for Peer's execution context (handlers will be called asynchronously)
 public:
-    bool am_interested() const;
-    bool am_choked() const;
-    bool is_choked() const;
-    bool is_interested() const;
+    explicit Peer(asio::ip::tcp::socket&& socket);
+    // buffers are valid during the handler invocation and owned by Peer,
+    // their contents are valid only if ec == 0
+    void read_handshake(HandshakeHandler handler);
+    void send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHandler handler);
 
-    void set_interested(PeerErrorHandler handler);
-    void set_choked(PeerErrorHandler handler);
+    bool am_interested() const {return _am_interested;}
+    bool am_choked() const {return _am_choked;}
+    bool is_choked() const {return _is_choked;}
+    bool is_interested() const {return _is_interested;}
 
-    void read_handshake(PeerHandshakeHandler handler);
-    void send_handshake(Hash20 info_hash, Hash20 own_id);
-    void send_handshake(const Hash20& info_hash, const Hash20& own_id);
+    void set_interested(bool value, ErrorHandler handler);
+    void set_choked(bool value, ErrorHandler handler);
 
-    void send_message(PeerMessageType message, std::vector<uint8_t> payload);
-    PeerMessageType read_message(PeerRecvHandler handler);
+    // buffers are valid during the handler invocation and owned by Peer,
+    // their contents are valid only if ec == 0,
+    // argument handler_ignored indicates call was invalid because other handler is pending
+    void read_message(RecvHandler handler);
+    void send_message(PeerMessageType message, ShortMsgBuffer payload, ErrorHandler handler);
+
+    void disconnect();
+
+// helper functions used to be called from inside
+private:
+    void update_internal_state(PeerMessageType type);
+    void run_read_handler(const RecvHandler& handler);
+};
+
+// messages of length up to 16 will be stored in array (Peer::ShortMsgBuffer)
+// any other will be stored in allocated vector,
+// payload will contain raw message data without length prefix and message type
+struct PeerMessage {
+    std::span<char> payload;
+    uint32_t length;
+    PeerMessageType type;
 };
 
 } // namespace torrent
