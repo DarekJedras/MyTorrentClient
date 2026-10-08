@@ -35,8 +35,26 @@ protected:
 
     template <typename Predicate>
     void run_until(Predicate predicate){
-        while (!predicate()) {
+        io.restart();
+        asio::steady_timer timer(io);
+        bool timed_out = false;
+
+        timer.expires_after(std::chrono::milliseconds(50));
+
+        timer.async_wait([&](asio::error_code ec){
+                ASSERT_TRUE(!ec || ec == asio::error::operation_aborted);
+                timed_out = true;
+        });
+
+        while (!predicate() && !timed_out){
             io.run_one();
+        }
+
+        if (!timed_out){
+            timer.cancel();
+            io.poll();
+        } else {
+            FAIL() << "Timed out waiting for condition";
         }
     }
 
@@ -78,28 +96,34 @@ protected:
         std::array<char, 20> info_hash{};
         std::array<char, 20> peer_id{};
 
-        bool done = false;
-        asio::error_code result;
+        bool read_done = false;
 
         peer->read_handshake([&](asio::error_code ec, const auto&, const auto&, Peer&){
-            result = ec;
-            done = true;
+            EXPECT_FALSE(ec);
+            read_done = true;
         });
 
         send_handshake(info_hash, peer_id);
 
-        run_until([&] {
-            return done;
+        peer->send_handshake({}, {}, {});
+
+        bool send_done = false;
+        std::array<char, 68> buf;
+        asio::async_read(client, asio::buffer(buf), [&](asio::error_code ec, size_t){
+            EXPECT_FALSE(ec);
+            send_done = true;
         });
 
-        ASSERT_FALSE(result);
+        run_until([&]{
+            return read_done && send_done;
+        });
     }
 
     void TearDown() override{
         if (!peer)
             return;
 
-        asio::post(io, [this] {
+        asio::post(io, [this]{
             peer->disconnect();
         });
 
@@ -119,10 +143,9 @@ TEST_F(PeerTest, ReadsValidHandshake){
     }
 
     bool done = false;
-    asio::error_code result;
 
     peer->read_handshake([&](asio::error_code ec, const auto& hash, const auto& id, Peer&){
-        result = ec;
+        EXPECT_FALSE(ec);
         EXPECT_EQ(hash, expected_hash);
         EXPECT_EQ(id, expected_id);
         done = true;
@@ -133,8 +156,6 @@ TEST_F(PeerTest, ReadsValidHandshake){
     run_until([&] {
         return done;
     });
-
-    EXPECT_FALSE(result);
 }
 
 TEST_F(PeerTest, RejectsInvalidHandshake){
@@ -228,27 +249,17 @@ TEST_F(PeerTest, RejectsSecondPendingRead){
     bool first_done = false;
     bool second_done = false;
 
-    peer->read_message(
-        [&](asio::error_code ec,
-            PeerMessage,
-            Peer&,
-            bool ignored)
-        {
-            EXPECT_FALSE(ignored);
-            EXPECT_FALSE(ec);
-            first_done = true;
-        });
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        EXPECT_FALSE(ignored);
+        EXPECT_FALSE(ec);
+        first_done = true;
+    });
 
-    peer->read_message(
-        [&](asio::error_code ec,
-            PeerMessage,
-            Peer&,
-            bool ignored)
-        {
-            EXPECT_TRUE(ignored);
-            EXPECT_FALSE(ec);
-            second_done = true;
-        });
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        EXPECT_TRUE(ignored);
+        EXPECT_FALSE(ec);
+        second_done = true;
+    });
 
     run_until([&] {
         return second_done;
@@ -336,6 +347,310 @@ TEST_F(PeerTest, UnconnectedPeerReturnsError){
         local_io.run_one();
 
     EXPECT_EQ(result, asio::error::not_connected);
+}
+
+TEST_F(PeerTest, SendsHandshakeSuccessfully){
+    connect_peer();
+
+    std::array<char, 20> info_hash{};
+    std::array<char, 20> own_id{};
+
+    for (int i = 0; i < 20; ++i) {
+        info_hash[i] = static_cast<char>(i);
+        own_id[i] = static_cast<char>(20 + i);
+    }
+
+    bool done = false;
+
+    peer->send_handshake(info_hash, own_id, [&](asio::error_code ec, Peer&, bool ignored) {
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        done = true;
+    });
+
+    run_until([&] {
+        return done;
+    });
+
+    std::array<char, 68> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    constexpr std::array<char, 20> protocol{
+        19, 'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n',
+        't', ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'
+    };
+
+    EXPECT_TRUE(std::equal(
+        protocol.begin(),
+        protocol.end(),
+        received.begin()
+    ));
+
+    for (size_t i = 20; i < 28; ++i)
+        EXPECT_EQ(received[i], 0);
+
+    EXPECT_TRUE(std::equal(
+        info_hash.begin(),
+        info_hash.end(),
+        received.begin() + 28
+    ));
+
+    EXPECT_TRUE(std::equal(
+        own_id.begin(),
+        own_id.end(),
+        received.begin() + 48
+    ));
+}
+
+
+TEST_F(PeerTest, SendsInterested){
+    connect_peer();
+    do_handshake();
+
+    bool done = false;
+
+    peer->set_interested(true, [&](asio::error_code ec, Peer& p, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        EXPECT_TRUE(p.am_interested());
+        done = true;
+    });
+
+    run_until([&]{
+        return done;
+    });
+
+    std::array<char, 5> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    EXPECT_EQ(received[0], 0);
+    EXPECT_EQ(received[1], 0);
+    EXPECT_EQ(received[2], 0);
+    EXPECT_EQ(received[3], 1);
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::INTERESTED));
+}
+
+
+TEST_F(PeerTest, SendsNotInterested){
+    connect_peer();
+    do_handshake();
+
+    bool interested_done = false;
+    bool not_interested_done = false;
+
+    peer->set_interested(true, [&](asio::error_code ec, Peer&, bool){
+        EXPECT_FALSE(ec);
+        interested_done = true;
+    });
+
+    run_until([&]{
+        return interested_done;
+    });
+
+    peer->set_interested(false, [&](asio::error_code ec, Peer& p, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        EXPECT_FALSE(p.am_interested());
+        not_interested_done = true;
+    });
+
+    run_until([&]{
+        return not_interested_done;
+    });
+
+    std::array<char, 10> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::INTERESTED));
+
+    EXPECT_EQ(received[9], std::to_underlying(PeerMessageType::NOT_INTERESTED));
+}
+
+
+TEST_F(PeerTest, SendsUnchoke){
+    connect_peer();
+    do_handshake();
+
+    bool done = false;
+
+    peer->set_choked(false, [&](asio::error_code ec, Peer& p, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        EXPECT_FALSE(p.is_choked());
+        done = true;
+    });
+
+    run_until([&]{
+        return done;
+    });
+
+    std::array<char, 5> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    EXPECT_EQ(received[0], 0);
+    EXPECT_EQ(received[1], 0);
+    EXPECT_EQ(received[2], 0);
+    EXPECT_EQ(received[3], 1);
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::UNCHOKE));
+}
+
+
+TEST_F(PeerTest, SendsChokeAfterUnchoke){
+    connect_peer();
+    do_handshake();
+
+    bool unchoke_done = false;
+    bool choke_done = false;
+
+    peer->set_choked(false, [&](asio::error_code ec, Peer&, bool){
+        EXPECT_FALSE(ec);
+        unchoke_done = true;
+    });
+
+    run_until([&]{
+        return unchoke_done;
+    });
+
+    peer->set_choked(true, [&](asio::error_code ec, Peer& p, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        EXPECT_TRUE(p.am_choked());
+        choke_done = true;
+    });
+
+    run_until([&]{
+        return choke_done;
+    });
+
+    std::array<char, 10> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::UNCHOKE));
+
+    EXPECT_EQ(received[9], std::to_underlying(PeerMessageType::CHOKE));
+}
+
+
+TEST_F(PeerTest, QueuedMessagesAreSentInOrder){
+    connect_peer();
+    do_handshake();
+
+    bool first_done = false;
+    bool second_done = false;
+
+    peer->set_choked(false, [&](asio::error_code ec, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        first_done = true;
+    });
+
+    peer->set_interested(true, [&](asio::error_code ec, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        second_done = true;
+    });
+
+    run_until([&]{
+        return second_done;
+    });
+
+    EXPECT_TRUE(first_done);
+
+    std::array<char, 10> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::UNCHOKE));
+
+    EXPECT_EQ(received[9], std::to_underlying(PeerMessageType::INTERESTED));
+}
+
+
+TEST_F(PeerTest, SecondPendingSendIsQueued){
+    connect_peer();
+    do_handshake();
+
+    bool first_done = false;
+    bool second_done = false;
+
+    peer->set_choked(false, [&](asio::error_code ec, Peer&, bool){
+        EXPECT_FALSE(ec);
+        first_done = true;
+    });
+
+    peer->set_choked(true, [&](asio::error_code ec, Peer&, bool){
+        EXPECT_FALSE(ec);
+        second_done = true;
+    });
+
+    run_until([&]{
+        return first_done && second_done;
+    });
+
+    ASSERT_TRUE(first_done);
+    ASSERT_TRUE(second_done);
+
+    std::array<char, 10> received{};
+    bool collected = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        EXPECT_FALSE(ec);
+        collected = true;
+    });
+
+    run_until([&]{
+        return collected;
+    });
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::UNCHOKE));
+
+    EXPECT_EQ(received[9], std::to_underlying(PeerMessageType::CHOKE));
 }
 
 } // namespace

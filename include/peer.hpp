@@ -41,7 +41,7 @@ class Peer {
 public:
     using RecvHandler = std::function<void(asio::error_code, PeerMessage, Peer&, bool handler_ignored)>;
     using HandshakeHandler = std::function<void(asio::error_code, const Hash20&, const PeerId&, Peer&)>;
-    using ErrorHandler = std::function<void(asio::error_code, Peer&)>;
+    using ErrorHandler = std::function<void(asio::error_code, Peer&, bool handler_ignored)>;
 
 private:
     using ShortMsgBuffer = std::array<char, 20>;
@@ -62,6 +62,10 @@ private:
     bool _is_choked = true;
     bool _is_interested = false;
 
+    // queuse are unlocked after succesful handshake
+    bool _send_queue_locked = true;
+    bool _recv_queue_locked = true;
+
     // designed to be called inside execution context (as tasks or callbacks)
     void store_received_msg(asio::error_code ec, size_t);
     // designed to be called inside execution context (as tasks or callbacks)
@@ -70,6 +74,8 @@ private:
 // all public functions are designed to be called from outside the execution context
 // and delegate asynchronous task for Peer's execution context (handlers will be called asynchronously)
 public:
+    // socket should be constructed with executor that guarantee preserved order of callback execution
+    // also socket must be connected to peer and first thing after initialization should be conducting handshake
     explicit Peer(asio::ip::tcp::socket&& socket);
     // buffers are valid during the handler invocation and owned by Peer,
     // their contents are valid only if ec == 0
@@ -96,6 +102,7 @@ public:
 private:
     void update_internal_state(PeerMessageType type);
     void run_read_handler(const RecvHandler& handler);
+    void start_keep_alives();
 };
 
 // messages of length up to 16 will be stored in array (Peer::ShortMsgBuffer)
