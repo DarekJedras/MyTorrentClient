@@ -18,9 +18,11 @@ Peer::Peer(asio::ip::tcp::socket&& socket) : _socket(std::move(socket)){
 }
 
 void Peer::disconnect(){
-    _socket.shutdown(asio::socket_base::shutdown_both, _ec);
-    _socket.close(_ec);
-    _ec = asio::error::not_connected;
+    asio::post(_socket.get_executor(), [this]{
+        _socket.shutdown(asio::socket_base::shutdown_both, _ec);
+        _socket.close(_ec);
+        _ec = asio::error::not_connected;
+    });
 }
 
 void Peer::store_received_msg(asio::error_code ec, size_t){
@@ -161,6 +163,32 @@ void Peer::read_message(RecvHandler handler){
     });
 }
 
+void Peer::send_stored_msg(asio::error_code ec, size_t){
+    if (ec){
+        _ec = ec;
+        return;
+    }
+    auto& [message_data, handler] = _send_queue.front();
+    std::visit([&handler, this](auto& buffer){
+        const char* buffer_ptr = buffer.data();
+        uint32_t message_length = utils::read_net_buffer<uint32_t>(buffer_ptr);
+        asio::async_write(
+            _socket,
+            asio::buffer(buffer.data(), message_length + 4),
+            [this, &handler](asio::error_code ec, size_t n){
+                if (ec){
+                    _ec = ec;
+                }
+                handler(ec, n);
+                _send_queue.pop_front();
+                if (!_ec && !_send_queue.empty()){
+                    send_stored_msg(ec, n);
+                }
+            }
+        );
+    }, message_data);
+}
+
 void Peer::set_interested(bool value, ErrorHandler handler){
     asio::post(_socket.get_executor(), [this, value, handler = std::move(handler)](){
         if (_ec || _am_interested == value){
@@ -180,7 +208,7 @@ void Peer::set_interested(bool value, ErrorHandler handler){
             handler(ec, *this);
         };
         if (need_send_call){
-            this->send_stored_msg(asio::error_code(), 0);
+            send_stored_msg(asio::error_code(), 0);
         }
     });
 }
@@ -199,12 +227,12 @@ void Peer::set_choked(bool value, ErrorHandler handler){
         *buf_ptr = std::to_underlying(value ? PeerMessageType::CHOKE : PeerMessageType::UNCHOKE);
         queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t n){
             if (!ec){
-                _am_interested = value;
+                _is_choked = value;
             }
             handler(ec, *this);
         };
         if (need_send_call){
-            this->send_stored_msg(asio::error_code(), 0);
+            send_stored_msg(asio::error_code(), 0);
         }
     });
 }
@@ -239,7 +267,7 @@ void Peer::run_read_handler(const RecvHandler& handler){
             return;
         }
         PeerMessageType type = static_cast<PeerMessageType>(type_value);
-        std::span<char> payload(msg_buf.data() + 5, msg_buf.size() - 5);
+        std::span<char> payload(msg_buf.data() + 5, length - 1);
         update_internal_state(type);
         handler(_ec, {payload, length, type}, *this, false);
     }, _recv_queue.front());

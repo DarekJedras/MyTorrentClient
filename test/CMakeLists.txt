@@ -23,6 +23,7 @@ target_link_libraries(unit_tests PRIVATE
 
 add_executable(integration_tests
     integration/test_announce_http.cpp
+    integration/test_peer_communication.cpp
 )
 
 target_link_libraries(integration_tests PRIVATE

@@ -4,6 +4,8 @@
 #include <map>
 #include "bencode.hpp"
 
+namespace {
+
 // ============================================================================
 // PARSER TESTS
 // ============================================================================
@@ -129,3 +131,5 @@ TEST(BencodeRoundTripTest, ParseAndSerializeRestoresOriginalString) {
 
     EXPECT_EQ(reserialized, original);
 }
+
+} // namespace

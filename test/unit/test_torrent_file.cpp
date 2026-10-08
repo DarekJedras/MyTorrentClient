@@ -2,6 +2,8 @@
 #include <stdexcept>
 #include "torrent_file.hpp"
 
+namespace torrent{
+namespace{
 
 // ============================================================================
 // TorrentFile CONSTRUCTOR TESTS
@@ -14,7 +16,7 @@ TEST(TorrentFileTest, ParseSingleFileTorrentSuccessfully) {
         "12:piece lengthi262144e6:pieces40:12345678901234567890"
         "09876543210987654321ee";
 
-    torrent::TorrentFile torrent(single_file_bencode);
+    TorrentFile torrent(single_file_bencode);
 
     EXPECT_EQ(torrent.announce(), "https://torrent.ubuntu.com/announce");
     EXPECT_FALSE(torrent.directory_name().has_value());
@@ -32,7 +34,7 @@ TEST(TorrentFileTest, ParseMultiFileTorrentSuccessfully) {
         "4:infod5:filesld6:lengthi1024e4:pathl11:release.txteed6:lengthi242880e4:pathl8:docs_pdf10:manual.pdfee"
         "e4:name12:ubuntu-files12:piece lengthi262144e6:pieces20:12345678901234567890ee";
 
-    torrent::TorrentFile torrent(multi_file_bencode);
+    TorrentFile torrent(multi_file_bencode);
 
     EXPECT_EQ(torrent.announce(), "https://torrent.ubuntu.com/announce");
     ASSERT_TRUE(torrent.directory_name().has_value());
@@ -51,12 +53,15 @@ TEST(TorrentFileTest, ParseMultiFileTorrentSuccessfully) {
 TEST(TorrentFileTest, ThrowsOnInvalidBencodeFormat) {
     std::string malformed_bencode = "d8:announce36:invalid_data_without_end";
 
-    EXPECT_THROW(torrent::TorrentFile torrent(malformed_bencode), std::runtime_error);
+    EXPECT_THROW(TorrentFile torrent(malformed_bencode), std::runtime_error);
 }
 
 TEST(TorrentFileTest, ThrowsOnMissingRequiredKeys) {
     std::string missing_pieces_bencode = 
         "d8:announce10:http://a.c4:infod6:lengthi100e4:name1:ae";
 
-    EXPECT_THROW(torrent::TorrentFile torrent(missing_pieces_bencode), std::runtime_error);
+    EXPECT_THROW(TorrentFile torrent(missing_pieces_bencode), std::runtime_error);
 }
+
+} // namespace
+} // namespace torrent
