@@ -14,7 +14,11 @@ constexpr std::array<char, 20> PROTOCOL_HEADER = {
     ' ', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l'
 };
 
-Peer::Peer(asio::ip::tcp::socket&& socket) : _socket(std::move(socket)){
+Peer::Peer(asio::ip::tcp::socket&& socket) :
+        _socket(std::move(socket)), 
+        _sender_timer(_socket.get_executor()),
+        _receiver_timer(_socket.get_executor())
+    {
     asio::error_code ec;
     _socket.remote_endpoint(ec);
     if (ec){
@@ -105,6 +109,11 @@ void Peer::store_received_msg(asio::error_code ec, size_t){
 
 void Peer::read_handshake(HandshakeHandler handler){
     asio::post(_socket.get_executor(), [this, handler = std::move(handler)](){
+        if (_read_handshake_started){
+            if (handler) handler(_ec, {}, {}, *this, true);
+            return;
+        }
+        _read_handshake_started = true;
         auto& first_buf = std::get<ShortMsgBuffer>(_recv_queue.emplace_back());
         auto& second_buf = std::get<ShortMsgBuffer>(_recv_queue.emplace_back());
         std::array<asio::mutable_buffer, 2> buffers{
@@ -114,7 +123,7 @@ void Peer::read_handshake(HandshakeHandler handler){
         asio::async_read(_socket, buffers, [handler, this](asio::error_code ec, size_t){
             if (ec){
                 _ec = ec;
-                if (handler) handler(ec, {}, {}, *this);
+                if (handler) handler(ec, {}, {}, *this, false);
                 return;
             }
             auto& first_buf = std::get<ShortMsgBuffer>(_recv_queue[0]);
@@ -123,7 +132,7 @@ void Peer::read_handshake(HandshakeHandler handler){
             auto second_buf_value = utils::read_net_buffer<uint64_t>(second_buf_ptr);
             if (first_buf != PROTOCOL_HEADER || second_buf_value != 0){
                 _ec = asio::error::operation_not_supported;
-                if (handler) handler(asio::error::operation_not_supported, {}, {}, *this);
+                if (handler) handler(asio::error::operation_not_supported, {}, {}, *this, false);
                 return;
             }
             std::array<asio::mutable_buffer, 2> buffers{
@@ -136,7 +145,7 @@ void Peer::read_handshake(HandshakeHandler handler){
                 }
                 auto& first_buf = std::get<ShortMsgBuffer>(_recv_queue[0]);
                 auto& second_buf = std::get<ShortMsgBuffer>(_recv_queue[1]);
-                if (handler) handler(ec, first_buf, second_buf, *this);
+                if (handler) handler(ec, first_buf, second_buf, *this, false);
                 _recv_queue.clear();
                 _recv_queue.emplace_back();
                 _recv_queue_locked = false;
@@ -197,6 +206,11 @@ void Peer::send_stored_msg(asio::error_code ec, size_t){
 
 void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHandler handler){
     asio::post(_socket.get_executor(), [=, handler = std::move(handler)]{
+        if (_send_handshake_started){
+            if (handler) handler(_ec, *this, true);
+            return;
+        }
+        _send_handshake_started = true;
         _send_queue.emplace_back();
         _send_queue.emplace_back();
         auto& first_buf = std::get<ShortMsgBuffer>(_send_queue[0].first);

@@ -73,6 +73,27 @@ protected:
         asio::write(client, asio::buffer(buffer));
     }
 
+    void receive_handshake_from_peer(){
+        std::array<char, 20> info_hash{};
+        std::array<char, 20> own_id{};
+
+        bool sent = false, read = false;
+
+        peer->send_handshake(info_hash, own_id, [&](asio::error_code ec, Peer&, bool was_ignored) {
+            ASSERT_FALSE(ec);
+            ASSERT_FALSE(was_ignored);
+            sent = true;
+        });
+
+        std::array<char, 68> received{};
+        asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+            ASSERT_FALSE(ec);
+            read = true;
+        });
+
+        run_until([&] { return sent && read; });
+    }
+
     void send_message(PeerMessageType type,
                       std::span<const char> payload = {}){
         const uint32_t length =
@@ -98,8 +119,9 @@ protected:
 
         bool read_done = false;
 
-        peer->read_handshake([&](asio::error_code ec, const auto&, const auto&, Peer&){
-            EXPECT_FALSE(ec);
+        peer->read_handshake([&](asio::error_code ec, const auto&, const auto&, Peer&, bool ignored){
+            ASSERT_FALSE(ec);
+            ASSERT_FALSE(ignored);
             read_done = true;
         });
 
@@ -110,7 +132,7 @@ protected:
         bool send_done = false;
         std::array<char, 68> buf;
         asio::async_read(client, asio::buffer(buf), [&](asio::error_code ec, size_t){
-            EXPECT_FALSE(ec);
+            ASSERT_FALSE(ec);
             send_done = true;
         });
 
@@ -131,6 +153,11 @@ protected:
     }
 };
 
+// ============================================================================
+// READ TESTS
+// ============================================================================
+
+
 TEST_F(PeerTest, ReadsValidHandshake){
     connect_peer();
 
@@ -144,7 +171,8 @@ TEST_F(PeerTest, ReadsValidHandshake){
 
     bool done = false;
 
-    peer->read_handshake([&](asio::error_code ec, const auto& hash, const auto& id, Peer&){
+    peer->read_handshake([&](asio::error_code ec, const auto& hash, const auto& id, Peer&, bool ignored){
+        EXPECT_FALSE(ignored);
         EXPECT_FALSE(ec);
         EXPECT_EQ(hash, expected_hash);
         EXPECT_EQ(id, expected_id);
@@ -156,31 +184,6 @@ TEST_F(PeerTest, ReadsValidHandshake){
     run_until([&] {
         return done;
     });
-}
-
-TEST_F(PeerTest, RejectsInvalidHandshake){
-    connect_peer();
-
-    std::array<char, 68> buffer{};
-
-    buffer[0] = 19;
-    std::memcpy(buffer.data() + 1, "INVALID protocol", 16);
-
-    asio::write(client, asio::buffer(buffer));
-
-    bool done = false;
-    asio::error_code result;
-
-    peer->read_handshake([&](asio::error_code ec, const auto&, const auto&, Peer&){
-        result = ec;
-        done = true;
-    });
-
-    run_until([&] {
-        return done;
-    });
-
-    EXPECT_EQ(result, asio::error::operation_not_supported);
 }
 
 TEST_F(PeerTest, PendingReadIsCalledWhenMessageArrives){
@@ -242,36 +245,6 @@ TEST_F(PeerTest, StateIsUpdatedWhenMessageIsRead){
     });
 }
 
-TEST_F(PeerTest, RejectsSecondPendingRead){
-    connect_peer();
-    do_handshake();
-
-    bool first_done = false;
-    bool second_done = false;
-
-    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
-        EXPECT_FALSE(ignored);
-        EXPECT_FALSE(ec);
-        first_done = true;
-    });
-
-    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
-        EXPECT_TRUE(ignored);
-        EXPECT_FALSE(ec);
-        second_done = true;
-    });
-
-    run_until([&] {
-        return second_done;
-    });
-
-    send_message(PeerMessageType::UNCHOKE);
-
-    run_until([&] {
-        return first_done;
-    });
-}
-
 TEST_F(PeerTest, PayloadHasCorrectSize){
     connect_peer();
     do_handshake();
@@ -300,54 +273,10 @@ TEST_F(PeerTest, PayloadHasCorrectSize){
     });
 }
 
-TEST_F(PeerTest, InvalidMessageTypeSetsError){
-    connect_peer();
-    do_handshake();
+// ============================================================================
+// SEND TESTS
+// ============================================================================
 
-    bool done = false;
-    asio::error_code result;
-
-    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
-        result = ec;
-        EXPECT_FALSE(ignored);
-        done = true;
-    });
-
-    // id = 9, czyli poza 0..8
-    std::array<char, 5> buffer{
-        0, 0, 0, 1,
-        9
-    };
-
-    asio::write(client, asio::buffer(buffer));
-
-    run_until([&] {
-        return done;
-    });
-
-    EXPECT_EQ(result, asio::error::operation_not_supported);
-}
-
-TEST_F(PeerTest, UnconnectedPeerReturnsError){
-    asio::io_context local_io;
-    tcp::socket socket{local_io};
-
-    Peer unconnected_peer(std::move(socket));
-
-    bool done = false;
-    asio::error_code result;
-
-    unconnected_peer.read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
-        result = ec;
-        EXPECT_FALSE(ignored);
-        done = true;
-    });
-
-    while (!done)
-        local_io.run_one();
-
-    EXPECT_EQ(result, asio::error::not_connected);
-}
 
 TEST_F(PeerTest, SendsHandshakeSuccessfully){
     connect_peer();
@@ -651,6 +580,243 @@ TEST_F(PeerTest, SecondPendingSendIsQueued){
     EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::UNCHOKE));
 
     EXPECT_EQ(received[9], std::to_underlying(PeerMessageType::CHOKE));
+}
+
+// ============================================================================
+// ERROR TESTS
+// ============================================================================
+
+TEST_F(PeerTest, RejectsInvalidHandshake){
+    connect_peer();
+
+    std::array<char, 68> buffer{};
+
+    buffer[0] = 19;
+    std::memcpy(buffer.data() + 1, "INVALID protocol", 16);
+
+    asio::write(client, asio::buffer(buffer));
+
+    bool done = false;
+    asio::error_code result;
+
+    peer->read_handshake([&](asio::error_code ec, const auto&, const auto&, Peer&, bool ignored){
+        EXPECT_FALSE(ignored);
+        result = ec;
+        done = true;
+    });
+
+    run_until([&] {
+        return done;
+    });
+
+    EXPECT_EQ(result, asio::error::operation_not_supported);
+}
+
+TEST_F(PeerTest, RejectsReadBeforeHandshake){
+    connect_peer();
+
+    bool done = false;
+
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_TRUE(ignored);
+        done = true;
+    });
+
+    run_until([&] { return done; });
+    EXPECT_TRUE(done);
+}
+
+TEST_F(PeerTest, RejectsSendingBeforeHandshake){
+    connect_peer();
+
+    bool interested_done = false;
+    bool unchoke_done = false;
+
+    peer->set_interested(true, [&](asio::error_code ec, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_TRUE(ignored);
+        interested_done = true;
+    });
+
+    peer->set_choked(false, [&](asio::error_code ec, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_TRUE(ignored);
+        unchoke_done = true;
+    });
+
+    run_until([&]{
+        return interested_done && unchoke_done;
+    });
+
+    ASSERT_TRUE(interested_done);
+    ASSERT_TRUE(unchoke_done);
+    EXPECT_EQ(client.available(), 0U);
+}
+
+TEST_F(PeerTest, SendingHandshakeDoesNotUnlockReceiving){
+    connect_peer();
+    receive_handshake_from_peer();
+
+    bool done = false;
+
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_TRUE(ignored);
+        done = true;
+    });
+
+    run_until([&] { return done; });
+}
+
+TEST_F(PeerTest, ReceivingHandshakeDoesNotUnlockSending){
+    connect_peer();
+    send_handshake({}, {});
+    bool handshake_received = false;
+    peer->read_handshake([&](asio::error_code ec, const Hash20&, const PeerId&, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        handshake_received = true;
+    });
+    run_until([&] { return handshake_received; });
+
+    bool done = false;
+    peer->set_interested(
+        true,
+        [&](asio::error_code ec, Peer&, bool ignored) {
+            EXPECT_FALSE(ec);
+            EXPECT_TRUE(ignored);
+            done = true;
+        });
+
+    run_until([&] { return done; });
+    EXPECT_EQ(client.available(), 0U);
+}
+
+TEST_F(PeerTest, RejectsSecondPendingRead){
+    connect_peer();
+    do_handshake();
+
+    bool first_done = false;
+    bool second_done = false;
+
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        EXPECT_FALSE(ignored);
+        EXPECT_FALSE(ec);
+        first_done = true;
+    });
+
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        EXPECT_TRUE(ignored);
+        EXPECT_FALSE(ec);
+        second_done = true;
+    });
+
+    run_until([&] {
+        return second_done;
+    });
+
+    send_message(PeerMessageType::UNCHOKE);
+
+    run_until([&] {
+        return first_done;
+    });
+}
+
+TEST_F(PeerTest, InvalidMessageTypeSetsError){
+    connect_peer();
+    do_handshake();
+
+    bool done = false;
+    asio::error_code result;
+
+    peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        result = ec;
+        EXPECT_FALSE(ignored);
+        done = true;
+    });
+
+    // id = 9, wrong value
+    std::array<char, 5> buffer{
+        0, 0, 0, 1,
+        9
+    };
+
+    asio::write(client, asio::buffer(buffer));
+
+    run_until([&] {
+        return done;
+    });
+
+    EXPECT_EQ(result, asio::error::operation_not_supported);
+}
+
+TEST_F(PeerTest, UnconnectedPeerReturnsError){
+    asio::io_context local_io;
+    tcp::socket socket{local_io};
+
+    Peer unconnected_peer(std::move(socket));
+
+    bool done = false;
+    asio::error_code result;
+
+    unconnected_peer.read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+        result = ec;
+        EXPECT_FALSE(ignored);
+        done = true;
+    });
+
+    while (!done)
+        local_io.run_one();
+
+    EXPECT_EQ(result, asio::error::not_connected);
+}
+
+TEST_F(PeerTest, DisconnectInSendHandler){
+    connect_peer();
+    receive_handshake_from_peer();
+
+    bool next_done = false;
+
+    peer->set_interested(true, [&](asio::error_code ec, Peer& p, bool ignored) {
+        ASSERT_FALSE(ec);
+        ASSERT_FALSE(ignored);
+
+        p.disconnect();
+
+        p.set_choked(false, [&](asio::error_code next_ec, Peer&, bool) {
+            EXPECT_EQ(next_ec, asio::error::not_connected);
+            next_done = true;
+        });
+    });
+
+    run_until([&] { return next_done; });
+    EXPECT_TRUE(next_done);
+}
+
+TEST_F(PeerTest, DisconnectInReadHandler){
+    connect_peer();
+    do_handshake();
+
+    bool next_done = false;
+
+    peer->read_message([&](asio::error_code ec, PeerMessage msg, Peer& p, bool ignored) {
+        ASSERT_FALSE(ec);
+        ASSERT_FALSE(ignored);
+        ASSERT_EQ(msg.type, PeerMessageType::UNCHOKE);
+
+        p.disconnect();
+
+        p.read_message([&](asio::error_code next_ec, PeerMessage, Peer&, bool) {
+            EXPECT_EQ(next_ec, asio::error::not_connected);
+            next_done = true;
+        });
+    });
+
+    send_message(PeerMessageType::UNCHOKE);
+
+    run_until([&] { return next_done; });
+    EXPECT_TRUE(next_done);
 }
 
 } // namespace

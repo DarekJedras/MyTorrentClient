@@ -40,7 +40,7 @@ class Peer {
     // all handlers should check whether error occured and behave accordingly
 public:
     using RecvHandler = std::function<void(asio::error_code, PeerMessage, Peer&, bool handler_ignored)>;
-    using HandshakeHandler = std::function<void(asio::error_code, const Hash20&, const PeerId&, Peer&)>;
+    using HandshakeHandler = std::function<void(asio::error_code, const Hash20&, const PeerId&, Peer&, bool ignored)>;
     using ErrorHandler = std::function<void(asio::error_code, Peer&, bool handler_ignored)>;
 
 private:
@@ -50,21 +50,27 @@ private:
 
     asio::ip::tcp::socket _socket;
     asio::error_code _ec;
+    asio::steady_timer _sender_timer;
+    asio::steady_timer _receiver_timer;
 
     std::deque<PendingSend> _send_queue;
     std::deque<MessageBuffer> _recv_queue;
 
     std::optional<RecvHandler> _pending_read;
 
+    // queuse are unlocked after succesful handshake
+    bool _send_queue_locked = true;
+    bool _recv_queue_locked = true;
+
+    bool _send_handshake_started = false;
+    bool _read_handshake_started = false;
+
+    // protocol specified state
     bool _am_choked = true;
     bool _am_interested = false;
 
     bool _is_choked = true;
     bool _is_interested = false;
-
-    // queuse are unlocked after succesful handshake
-    bool _send_queue_locked = true;
-    bool _recv_queue_locked = true;
 
     // designed to be called inside execution context (as tasks or callbacks)
     void store_received_msg(asio::error_code ec, size_t);
