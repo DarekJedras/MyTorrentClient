@@ -5,7 +5,10 @@
 #include <utility>
 #include <vector>
 #include <array>
+#include <chrono>
 #include "utils.hpp"
+
+using namespace std::chrono_literals;
 
 namespace torrent {
 
@@ -31,14 +34,17 @@ void Peer::disconnect(){
         _socket.shutdown(asio::socket_base::shutdown_both, _ec);
         _socket.close(_ec);
         _ec = asio::error::not_connected;
+
+        _sender_timer.cancel();
+        _receiver_timer.cancel();
     });
 }
 
-void Peer::store_received_msg(asio::error_code ec, size_t){
-    if (ec){
-        _ec = ec;
+void Peer::store_received_msg(){
+    if (_ec){
         return;
     }
+    set_keep_alive_check();
     ShortMsgBuffer& buf = std::get<ShortMsgBuffer>(_recv_queue.back());
     const char* msg_buf_ptr = buf.data();
     uint32_t msg_length = utils::read_net_buffer<uint32_t>(msg_buf_ptr);
@@ -52,7 +58,7 @@ void Peer::store_received_msg(asio::error_code ec, size_t){
                     return;
                 }
                 // keep alive messages are ignored
-                this->store_received_msg(ec, n);
+                this->store_received_msg();
             }
         );
     } else if (msg_length <= buf.size() - 4){ // short msg
@@ -69,7 +75,11 @@ void Peer::store_received_msg(asio::error_code ec, size_t){
                     _socket,
                     asio::buffer(next_buf.data(), 4),
                     [this](asio::error_code ec, size_t n){
-                        this->store_received_msg(ec, n);
+                        if (ec){
+                            _ec = ec;
+                            return;
+                        }
+                        this->store_received_msg();
                     }
                 );
                 if (_pending_read.has_value()){
@@ -95,7 +105,11 @@ void Peer::store_received_msg(asio::error_code ec, size_t){
                     _socket,
                     asio::buffer(next_buf.data(), 4),
                     [this](asio::error_code ec, size_t n){
-                        this->store_received_msg(ec, n);
+                        if (ec){
+                            _ec = ec;
+                            return;
+                        }
+                        this->store_received_msg();
                     }
                 );
                 if (_pending_read.has_value()){
@@ -153,9 +167,14 @@ void Peer::read_handshake(HandshakeHandler handler){
                     _socket,
                     asio::buffer(std::get<ShortMsgBuffer>(_recv_queue.back()).data(), 4),
                     [this](asio::error_code ec, size_t n){
-                        this->store_received_msg(ec, n);
+                        if (ec){
+                            _ec = ec;
+                            return;
+                        }
+                        this->store_received_msg();
                     }
                 );
+                set_keep_alive_check();
             });
         });
     });
@@ -178,9 +197,8 @@ void Peer::read_message(RecvHandler handler){
     });
 }
 
-void Peer::send_stored_msg(asio::error_code ec, size_t){
-    if (ec){
-        _ec = ec;
+void Peer::send_stored_msg(){
+    if (_ec){
         return;
     }
     auto& [message_data, callback] = _send_queue.front();
@@ -194,10 +212,11 @@ void Peer::send_stored_msg(asio::error_code ec, size_t){
                 if (ec){
                     _ec = ec;
                 }
+                set_keep_alive_send(); // updates countdown to 2 min since now
                 if (callback) callback(ec, n);
                 _send_queue.pop_front();
                 if (!_ec && !_send_queue.empty()){
-                    send_stored_msg(ec, n);
+                    this->send_stored_msg();
                 }
             }
         );
@@ -245,6 +264,7 @@ void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHa
                     if (handler) handler(ec, *this, false);
                     _send_queue.clear();
                     _send_queue_locked = false;
+                    set_keep_alive_send();
                 });
             }
         );
@@ -275,7 +295,7 @@ void Peer::set_interested(bool value, ErrorHandler handler){
             return;
         };
         if (need_send_call){
-            send_stored_msg(asio::error_code(), 0);
+            send_stored_msg();
         }
     });
 }
@@ -303,7 +323,7 @@ void Peer::set_choked(bool value, ErrorHandler handler){
             if (handler) handler(ec, *this, false);
         };
         if (need_send_call){
-            send_stored_msg(asio::error_code(), 0);
+            send_stored_msg();
         }
     });
 }
@@ -343,6 +363,41 @@ void Peer::run_read_handler(const RecvHandler& handler){
         if (handler) handler(_ec, {payload, length, type}, *this, false);
     }, _recv_queue.front());
     _recv_queue.pop_front();
+}
+
+void Peer::set_keep_alive_send(){
+    _sender_timer.expires_after(2min);
+    _sender_timer.async_wait([this](asio::error_code ec){
+        if (ec == asio::error::operation_aborted){
+            return;
+        } else if (ec){
+            if (!_ec){
+                _ec = ec;
+            }
+            return;
+        }
+        if (_send_queue.empty()){
+            auto& buf = std::get<ShortMsgBuffer>(_send_queue.emplace_back().first);
+            char* buf_ptr = buf.data();
+            utils::write_net_buffer<uint32_t>(buf_ptr, 0);
+            send_stored_msg();
+        }
+    });
+}
+
+void Peer::set_keep_alive_check(){
+    _receiver_timer.expires_after(4min);
+    _receiver_timer.async_wait([this](asio::error_code ec){
+        if (ec == asio::error::operation_aborted){
+            return;
+        } else if (ec){
+            if (!_ec){
+                _ec = ec;
+            }
+            return;
+        }
+        _ec = asio::error::timed_out;
+    });
 }
 
 }

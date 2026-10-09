@@ -73,9 +73,9 @@ private:
     bool _is_interested = false;
 
     // designed to be called inside execution context (as tasks or callbacks)
-    void store_received_msg(asio::error_code ec, size_t);
+    void store_received_msg();
     // designed to be called inside execution context (as tasks or callbacks)
-    void send_stored_msg(asio::error_code ec, size_t);
+    void send_stored_msg();
 
 // all public functions are designed to be called from outside the execution context
 // and delegate asynchronous task for Peer's execution context (handlers will be called asynchronously)
@@ -108,7 +108,8 @@ public:
 private:
     void update_internal_state(PeerMessageType type);
     void run_read_handler(const RecvHandler& handler);
-    void start_keep_alives();
+    void set_keep_alive_send();
+    void set_keep_alive_check();
 };
 
 // messages of length up to 16 will be stored in array (Peer::ShortMsgBuffer)

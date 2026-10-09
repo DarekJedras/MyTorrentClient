@@ -67,10 +67,15 @@ protected:
 
         // 8 reserved bytes = 0
         std::memcpy(buffer.data() + 28, info_hash.data(), 20);
-
         std::memcpy(buffer.data() + 48, peer_id.data(), 20);
 
-        asio::write(client, asio::buffer(buffer));
+        bool done = false;
+        asio::async_write(client, asio::buffer(buffer), [&](asio::error_code ec, size_t){
+            ASSERT_FALSE(ec);
+            done = true;
+        });
+
+        run_until([&]{ return done;});
     }
 
     void receive_handshake_from_peer(){
@@ -145,10 +150,8 @@ protected:
         if (!peer)
             return;
 
-        asio::post(io, [this]{
-            peer->disconnect();
-        });
-
+        io.restart();
+        peer->disconnect();
         io.run();
     }
 };
