@@ -7,10 +7,35 @@
 #include <array>
 #include <chrono>
 #include "utils.hpp"
+#include <iostream>
 
 using namespace std::chrono_literals;
 
 namespace torrent {
+
+namespace {
+uint32_t deduce_msg_length(PeerMessageType type){
+    using torrent::PeerMessageType;
+    switch (type) {
+        case PeerMessageType::CHOKE:
+            return 1;
+        case PeerMessageType::UNCHOKE:
+            return 1;
+        case PeerMessageType::INTERESTED:
+            return 1;
+        case PeerMessageType::NOT_INTERESTED:
+            return 1;
+        case PeerMessageType::HAVE:
+            return 5;
+        case PeerMessageType::REQUEST:
+            return 13;
+        case PeerMessageType::CANCEL:
+            return 13;
+        default:
+            return 0;
+    }
+}
+}
 
 constexpr std::array<char, 20> PROTOCOL_HEADER = {
     19, 'B', 'i', 't', 'T', 'o', 'r', 'r', 'e', 'n', 't',
@@ -52,7 +77,7 @@ void Peer::store_received_msg(){
         asio::async_read(
             _socket,
             asio::buffer(buf.data(), 4),
-            [this](asio::error_code ec, size_t n){
+            [this](asio::error_code ec, size_t){
                 if (ec){
                     _ec = ec;
                     return;
@@ -65,7 +90,7 @@ void Peer::store_received_msg(){
         asio::async_read(
             _socket,
             asio::buffer(buf.data() + 4, msg_length),
-            [this](asio::error_code ec, size_t n){
+            [this](asio::error_code ec, size_t){
                 if (ec){
                     _ec = ec;
                     return;
@@ -74,7 +99,7 @@ void Peer::store_received_msg(){
                 asio::async_read(
                     _socket,
                     asio::buffer(next_buf.data(), 4),
-                    [this](asio::error_code ec, size_t n){
+                    [this](asio::error_code ec, size_t){
                         if (ec){
                             _ec = ec;
                             return;
@@ -95,7 +120,7 @@ void Peer::store_received_msg(){
         asio::async_read(
             _socket,
             asio::buffer(long_buffer_ptr, msg_length),
-            [this](asio::error_code ec, size_t n){
+            [this](asio::error_code ec, size_t){
                 if (ec){
                     _ec = ec;
                     return;
@@ -104,7 +129,7 @@ void Peer::store_received_msg(){
                 asio::async_read(
                     _socket,
                     asio::buffer(next_buf.data(), 4),
-                    [this](asio::error_code ec, size_t n){
+                    [this](asio::error_code ec, size_t){
                         if (ec){
                             _ec = ec;
                             return;
@@ -166,7 +191,7 @@ void Peer::read_handshake(HandshakeHandler handler){
                 asio::async_read(
                     _socket,
                     asio::buffer(std::get<ShortMsgBuffer>(_recv_queue.back()).data(), 4),
-                    [this](asio::error_code ec, size_t n){
+                    [this](asio::error_code ec, size_t){
                         if (ec){
                             _ec = ec;
                             return;
@@ -203,11 +228,19 @@ void Peer::send_stored_msg(){
     }
     auto& [message_data, callback] = _send_queue.front();
     std::visit([&callback, this](auto& buffer){
-        const char* buffer_ptr = buffer.data();
-        uint32_t message_length = utils::read_net_buffer<uint32_t>(buffer_ptr);
+        using BufferType = std::decay_t<decltype(buffer)>;
+        std::array<asio::const_buffer, 2> msg_buf;
+        if constexpr (std::is_same_v<BufferType, ShortMsgBuffer>){
+            const char* buffer_ptr = buffer.data();
+            uint32_t message_length = utils::read_net_buffer<uint32_t>(buffer_ptr);
+            msg_buf = { asio::buffer(buffer.data(), message_length + 4) };
+        } else { // std::is_same_v<BufferType, LongSendBuffer>
+            auto& [payload, metadata] = buffer;
+            msg_buf = { asio::buffer(metadata), asio::buffer(payload) };
+        }
         asio::async_write(
             _socket,
-            asio::buffer(buffer.data(), message_length + 4),
+            msg_buf,
             [this, &callback](asio::error_code ec, size_t n){
                 if (ec){
                     _ec = ec;
@@ -224,7 +257,7 @@ void Peer::send_stored_msg(){
 }
 
 void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHandler handler){
-    asio::post(_socket.get_executor(), [=, handler = std::move(handler)]{
+    asio::post(_socket.get_executor(), [=, this, handler = std::move(handler)]{
         if (_send_handshake_started){
             if (handler) handler(_ec, *this, true);
             return;
@@ -271,6 +304,63 @@ void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHa
     });
 }
 
+void Peer::send_message(PeerMessageType type, std::vector<char> payload, ErrorHandler handler){
+    asio::post(
+        _socket.get_executor(),
+        [=, this, payload = std::move(payload), handler = std::move(handler)](){
+            if (_ec){
+                if (handler) handler(_ec, *this, false);
+                return;
+            } else if (_send_queue_locked){
+                if (handler) handler(_ec, *this, true);
+                return;
+            }
+            // if there are other messages in queue, it will be sent after them
+            bool need_send_call = _send_queue.empty();
+            auto& queue_slot = _send_queue.emplace_back();
+            queue_slot.first.emplace<LongSendBuffer>(std::move(payload), std::array<char, 5>{});
+            auto& [data, metadata] = std::get<LongSendBuffer>(queue_slot.first);
+            char* buf_ptr = metadata.data();
+            uint32_t message_length = data.size() + 1;
+            utils::write_net_buffer<uint32_t>(buf_ptr, message_length);
+            utils::write_net_buffer<char>(buf_ptr, std::to_underlying(type));
+            queue_slot.second = [this, handler=std::move(handler)](asio::error_code ec, size_t){
+                if (handler) handler(ec, *this, false);
+            };
+            if (need_send_call){
+                send_stored_msg();
+            }
+        }
+    );
+}
+
+void Peer::send_message(PeerMessageType type, std::array<char, 12> payload, ErrorHandler handler){
+    asio::post(_socket.get_executor(), [=, this, handler = std::move(handler)](){
+        if (_ec){
+            if (handler) handler(_ec, *this, false);
+            return;
+        } else if (_send_queue_locked){
+            if (handler) handler(_ec, *this, true);
+            return;
+        }
+        // if there are other messages in queue, it will be sent after them
+        bool need_send_call = _send_queue.empty();
+        auto& queue_slot = _send_queue.emplace_back();
+        auto& buf = std::get<ShortMsgBuffer>(queue_slot.first);
+        char* buf_ptr = buf.data();
+        uint32_t message_length = deduce_msg_length(type);
+        utils::write_net_buffer<uint32_t>(buf_ptr, message_length);
+        utils::write_net_buffer<char>(buf_ptr, std::to_underlying(type));
+        std::memcpy(buf_ptr, payload.data(), message_length-1);
+        queue_slot.second = [this, handler=std::move(handler)](asio::error_code ec, size_t){
+            if (handler) handler(ec, *this, false);
+        };
+        if (need_send_call){
+            send_stored_msg();
+        }
+    });
+}
+
 void Peer::set_interested(bool value, ErrorHandler handler){
     asio::post(_socket.get_executor(), [this, value, handler = std::move(handler)](){
         if (_ec){
@@ -287,7 +377,7 @@ void Peer::set_interested(bool value, ErrorHandler handler){
         char* buf_ptr = buf.data();
         utils::write_net_buffer<uint32_t>(buf_ptr, 1);
         *buf_ptr = std::to_underlying(value ? PeerMessageType::INTERESTED : PeerMessageType::NOT_INTERESTED);
-        queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t n){
+        queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t){
             if (!ec){
                 _am_interested = value;
             }
@@ -316,7 +406,7 @@ void Peer::set_choked(bool value, ErrorHandler handler){
         char* buf_ptr = buf.data();
         utils::write_net_buffer<uint32_t>(buf_ptr, 1);
         *buf_ptr = std::to_underlying(value ? PeerMessageType::CHOKE : PeerMessageType::UNCHOKE);
-        queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t n){
+        queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t){
             if (!ec){
                 _is_choked = value;
             }

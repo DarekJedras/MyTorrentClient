@@ -45,8 +45,11 @@ public:
 
 private:
     using ShortMsgBuffer = std::array<char, 20>;
-    using MessageBuffer = std::variant<Peer::ShortMsgBuffer, std::vector<char>>; // array must be first in types list
-    using PendingSend = std::pair<MessageBuffer, std::function<void(asio::error_code, size_t)>>;
+    using LongMsgBuffer = std::vector<char>;
+    using LongSendBuffer = std::pair<std::vector<char>, std::array<char, 5>>;
+    using ReceiveBuffer = std::variant<ShortMsgBuffer, LongMsgBuffer>; // array must be first in types list
+    using SendBuffer = std::variant<ShortMsgBuffer, LongSendBuffer>; // array must be first in types list
+    using PendingSend = std::pair<SendBuffer, std::function<void(asio::error_code, size_t)>>;
 
     asio::ip::tcp::socket _socket;
     asio::error_code _ec;
@@ -54,7 +57,7 @@ private:
     asio::steady_timer _receiver_timer;
 
     std::deque<PendingSend> _send_queue;
-    std::deque<MessageBuffer> _recv_queue;
+    std::deque<ReceiveBuffer> _recv_queue;
 
     std::optional<RecvHandler> _pending_read;
 
@@ -88,9 +91,13 @@ public:
     void read_handshake(HandshakeHandler handler);
     void send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHandler handler);
 
+    // not thread-safe, should only be called inside handlers
     bool am_interested() const {return _am_interested;}
+    // not thread-safe, should only be called inside handlers
     bool am_choked() const {return _am_choked;}
+    // not thread-safe, should only be called inside handlers
     bool is_choked() const {return _is_choked;}
+    // not thread-safe, should only be called inside handlers
     bool is_interested() const {return _is_interested;}
 
     void set_interested(bool value, ErrorHandler handler);
@@ -100,7 +107,10 @@ public:
     // their contents are valid only if ec == 0,
     // argument handler_ignored indicates call was invalid because other handler is pending
     void read_message(RecvHandler handler);
-    void send_message(PeerMessageType message, ShortMsgBuffer payload, ErrorHandler handler);
+    // all bytes from vector will be sent, payload will be prefixed by length and message type
+    void send_message(PeerMessageType message, std::vector<char> payload, ErrorHandler handler);
+    // message length will be deduced from message type, payload will be prefixed by length and message type
+    void send_message(PeerMessageType message, std::array<char, 12> payload, ErrorHandler handler);
 
     void disconnect();
 

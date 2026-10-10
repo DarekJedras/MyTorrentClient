@@ -12,6 +12,8 @@
 namespace torrent {
 namespace {
 
+constexpr int TIMEOUT_PERIOD_MS = 50;
+
 using torrent::Peer;
 using torrent::PeerMessageType;
 
@@ -39,7 +41,7 @@ protected:
         asio::steady_timer timer(io);
         bool timed_out = false;
 
-        timer.expires_after(std::chrono::milliseconds(50));
+        timer.expires_after(std::chrono::milliseconds(TIMEOUT_PERIOD_MS));
 
         timer.async_wait([&](asio::error_code ec){
                 ASSERT_TRUE(!ec || ec == asio::error::operation_aborted);
@@ -276,6 +278,37 @@ TEST_F(PeerTest, PayloadHasCorrectSize){
     });
 }
 
+TEST_F(PeerTest, ReadsLargeMessage){
+    connect_peer();
+    do_handshake();
+
+    std::vector<char> payload(100);
+    for (size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<char>(i);
+
+    bool done = false;
+
+    peer->read_message([&](asio::error_code ec, PeerMessage msg, Peer&, bool ignored){
+        ASSERT_FALSE(ec);
+        ASSERT_FALSE(ignored);
+
+        EXPECT_EQ(msg.type, PeerMessageType::PIECE);
+        EXPECT_EQ(msg.length, 101U);
+        ASSERT_EQ(msg.payload.size(), payload.size());
+
+        EXPECT_TRUE(std::equal(
+            payload.begin(),
+            payload.end(),
+            msg.payload.begin()));
+
+        done = true;
+    });
+
+    send_message(PeerMessageType::PIECE, payload);
+
+    run_until([&] { return done; });
+}
+
 // ============================================================================
 // SEND TESTS
 // ============================================================================
@@ -458,6 +491,127 @@ TEST_F(PeerTest, SendsUnchoke){
     EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::UNCHOKE));
 }
 
+TEST_F(PeerTest, SendsRequestWithFixedPayload){
+    connect_peer();
+    do_handshake();
+
+    std::array<char, 12> payload{};
+    for (size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<char>(i + 1);
+
+    bool done = false;
+
+    peer->send_message(PeerMessageType::REQUEST, payload, [&](asio::error_code ec, Peer&, bool ignored) {
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        done = true;
+    });
+
+    run_until([&] { return done; });
+
+    std::array<char, 17> received{};
+    bool sent = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        ASSERT_FALSE(ec);
+        sent = true;
+    });
+
+    run_until([&] { return sent; });
+
+    // length = 1 byte ID + 12 bytes payload
+    EXPECT_EQ(received[0], 0);
+    EXPECT_EQ(received[1], 0);
+    EXPECT_EQ(received[2], 0);
+    EXPECT_EQ(received[3], 13);
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::REQUEST));
+
+    EXPECT_TRUE(std::equal(payload.begin(), payload.end(), received.begin() + 5));
+}
+
+TEST_F(PeerTest, SendsPieceWithVectorPayload){
+    connect_peer();
+    do_handshake();
+
+    std::vector<char> payload(100);
+    for (size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<char>(i);
+
+    bool done = false;
+
+    peer->send_message(PeerMessageType::PIECE, payload, [&](asio::error_code ec, Peer&, bool ignored){
+        EXPECT_FALSE(ec);
+        EXPECT_FALSE(ignored);
+        done = true;
+    });
+
+    run_until([&] { return done; });
+
+    std::vector<char> received(4 + 1 + payload.size());
+    bool sent = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        ASSERT_FALSE(ec);
+        sent = true;
+    });
+
+    run_until([&] { return sent; });
+
+    // length = ID + payload = 101
+    EXPECT_EQ(received[0], 0);
+    EXPECT_EQ(received[1], 0);
+    EXPECT_EQ(received[2], 0);
+    EXPECT_EQ(received[3], 101);
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::PIECE));
+
+    EXPECT_TRUE(std::equal(payload.begin(), payload.end(), received.begin() + 5));
+}
+
+TEST_F(PeerTest, SendsQueuedMessagesInOrder){
+    connect_peer();
+    do_handshake();
+
+    std::array<char, 12> request_payload{};
+    std::array<char, 12> cancel_payload{};
+
+    bool request_done = false;
+    bool cancel_done = false;
+
+    peer->send_message(
+        PeerMessageType::REQUEST,
+        request_payload,
+        [&](asio::error_code ec, Peer&, bool ignored) {
+            EXPECT_FALSE(ec);
+            EXPECT_FALSE(ignored);
+            request_done = true;
+        }
+    );
+
+    peer->send_message(
+        PeerMessageType::CANCEL,
+        cancel_payload,
+        [&](asio::error_code ec, Peer&, bool ignored) {
+            EXPECT_FALSE(ec);
+            EXPECT_FALSE(ignored);
+            cancel_done = true;
+        }
+    );
+
+    run_until([&] { return request_done && cancel_done; });
+
+    std::array<char, 34> received{};
+    bool sent = false;
+    asio::async_read(client, asio::buffer(received), [&](asio::error_code ec, size_t){
+        ASSERT_FALSE(ec);
+        sent = true;
+    });
+
+    run_until([&] { return sent; });
+
+    EXPECT_EQ(received[4], std::to_underlying(PeerMessageType::REQUEST));
+
+    EXPECT_EQ(received[21], std::to_underlying(PeerMessageType::CANCEL));
+}
 
 TEST_F(PeerTest, SendsChokeAfterUnchoke){
     connect_peer();
