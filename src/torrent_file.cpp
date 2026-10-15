@@ -82,10 +82,10 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
             if (_pieces.size() / 20 != length / _piece_length + (length % _piece_length != 0 ? 1 : 0)){
                 throw std::runtime_error("invalid \"pieces\" length");
             }
+            _total_file_length = length;
             return;
         }
         if (info.contains("files")){
-            BencodeInt total_length = 0;
             _directory_name = std::move(name);
             const BencodeList& files = extract_bencode_value<BencodeList>("files", info);
             _files_spec.reserve(files.size());
@@ -97,9 +97,10 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
                 BencodeInt length = extract_bencode_value<BencodeInt>("length", *file_ptr);
                 const BencodeList& path = extract_bencode_value<BencodeList>("path", *file_ptr);
                 _files_spec.emplace_back(extract_bencode_path(path), length);
-                total_length += length;
+                _total_file_length += length;
             }
-            if (_pieces.size() / 20 != total_length / _piece_length + (total_length % _piece_length != 0 ? 1 : 0)){
+            if (_pieces.size() / 20 !=
+                _total_file_length / _piece_length + (_total_file_length % _piece_length != 0 ? 1 : 0)){
                 throw std::runtime_error("invalid \"pieces\" length");
             }
             return;

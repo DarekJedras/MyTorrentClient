@@ -27,6 +27,7 @@ class TorrentFile {
     std::string _pieces;
     std::vector<FileSpec> _files_spec;
     int64_t _piece_length = 0;
+    uint64_t _total_file_length = 0;
     Hash20 _info_hash;
 public:
     const std::optional<std::filesystem::path>& directory_name() const {return _directory_name;}
@@ -35,6 +36,7 @@ public:
     const Hash20& info_hash() const {return _info_hash;}
     const std::vector<FileSpec>& files_spec() const {return _files_spec;}
     int64_t piece_length() const {return _piece_length;}
+    uint64_t total_file_length() const {return _total_file_length;}
 
     explicit TorrentFile(const std::string& bencoded_data);
 };

@@ -22,6 +22,7 @@ TEST(TorrentFileTest, ParseSingleFileTorrentSuccessfully) {
     EXPECT_FALSE(torrent.directory_name().has_value());
     EXPECT_EQ(torrent.piece_length(), 262144);
     EXPECT_EQ(torrent.pieces(), "1234567890123456789009876543210987654321");
+    EXPECT_EQ(torrent.total_file_length(), 330056LL);
     
     ASSERT_EQ(torrent.files_spec().size(), 1);
     EXPECT_EQ(torrent.files_spec()[0].filepath(), "ubuntu-24.04-desktop-amd64.iso");
@@ -40,6 +41,7 @@ TEST(TorrentFileTest, ParseMultiFileTorrentSuccessfully) {
     ASSERT_TRUE(torrent.directory_name().has_value());
     EXPECT_EQ(torrent.directory_name().value(), "ubuntu-files");
     EXPECT_EQ(torrent.piece_length(), 262144);
+    EXPECT_EQ(torrent.total_file_length(), 243904);
 
     ASSERT_EQ(torrent.files_spec().size(), 2);
 
