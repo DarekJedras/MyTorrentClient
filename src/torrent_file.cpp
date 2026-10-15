@@ -1,10 +1,9 @@
 #include <fstream>
 #include <format>
 #include <stdexcept>
-#include <openssl/evp.h>
-#include<iostream>
 #include "torrent_file.hpp"
 #include "bencode.hpp"
+#include "utils.hpp"
 
 namespace torrent {
 
@@ -18,37 +17,6 @@ std::filesystem::path extract_bencode_path(const BencodeList& file_path){
         path.append(*str);
     }
     return path;
-}
-
-Hash20 compute_sha1(std::string_view data){
-    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(
-        EVP_MD_CTX_new(), 
-        &EVP_MD_CTX_free
-    );
-    if (!ctx) {
-        throw std::runtime_error("couldn't create EVP_MD_CTX context");
-    }
-
-    if (EVP_DigestInit_ex(ctx.get(), EVP_sha1(), nullptr) != 1) {
-        throw std::runtime_error("couldn't initialize SHA-1 algorithm");
-    }
-
-    if (EVP_DigestUpdate(ctx.get(), data.data(), data.size()) != 1) {
-        throw std::runtime_error("couldn't update SHA-1 digest state");
-    }
-
-    Hash20 hash;
-    unsigned int hash_len = 0;
-
-    if (EVP_DigestFinal_ex(ctx.get(), reinterpret_cast<unsigned char*>(hash.data()), &hash_len) != 1) {
-        throw std::runtime_error("couldn't finalize SHA-1 digest");
-    }
-
-    if (hash_len != hash.size()){
-        throw std::runtime_error("unexpected SHA-1 digest length");
-    }
-
-    return hash;
 }
 
 TorrentFile::TorrentFile(const std::string& bencoded_data){
@@ -65,7 +33,7 @@ TorrentFile::TorrentFile(const std::string& bencoded_data){
     try {
         _announce = extract_bencode_value<BencodeString>("announce", torrent_data);
         const BencodeDict& info = extract_bencode_value<BencodeDict>("info", torrent_data);
-        _info_hash = compute_sha1(bencode(info));
+        _info_hash = utils::compute_sha1(bencode(info));
 
         _piece_length = extract_bencode_value<BencodeInt>("piece length", info);
         _pieces = extract_bencode_value<BencodeString>("pieces", info);
