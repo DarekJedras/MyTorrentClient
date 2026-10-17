@@ -7,6 +7,7 @@ add_library(torrent_core
 	tracker.cpp
 	udp_tracker.cpp
 	peer.cpp
+	piece_manager.cpp
 )
 
 target_link_libraries(torrent_core PRIVATE

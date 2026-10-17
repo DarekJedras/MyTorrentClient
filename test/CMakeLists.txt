@@ -13,6 +13,7 @@ add_executable(unit_tests
     unit/test_torrent_file.cpp
     unit/test_tracker.cpp
     unit/test_utils.cpp
+    unit/test_piece_manager.cpp
 )
 target_link_libraries(unit_tests PRIVATE
     GTest::gtest_main
