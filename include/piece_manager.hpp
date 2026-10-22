@@ -40,6 +40,7 @@ class PieceManager {
     TorrentFile _torrent_info;
     DiskStorage _disk_io;
     std::vector<PieceObject> _pieces_storage;
+    std::vector<bool> _pieces_bitmask;
 
 public:
     PieceManager(TorrentFile torrent, DiskStorage disk_io);
@@ -63,6 +64,8 @@ public:
 
     // returns true if hash verification completed succesfully
     bool verify_hash(size_t idx);
+
+    const std::vector<bool>& pieces_bitmask() const {return _pieces_bitmask;}
 };
 
 } // namespace torrent

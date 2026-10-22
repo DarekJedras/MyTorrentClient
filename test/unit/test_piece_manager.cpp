@@ -154,6 +154,14 @@ protected:
     }
 };
 
+// valid only until loading partially downloaded file is implemented
+TEST_F(PieceManagerTest, PiecesBitmaskStartsEmpty){
+    EXPECT_EQ(
+        manager->pieces_bitmask(),
+        (std::vector<bool>{false, false, false})
+    );
+}
+
 TEST_F(PieceManagerTest, CalculatesLastPieceSizeCorrectly){
     manager->add_piece(2, std::vector<char>{'i', 'j'});
 
@@ -166,19 +174,40 @@ TEST_F(PieceManagerTest, CalculatesLastPieceSizeCorrectly){
 TEST_F(PieceManagerTest, VerifiesCorrectPieceHash){
     manager->add_piece(0, std::vector<char>{'a', 'b', 'c', 'd'});
 
+    EXPECT_FALSE(manager->pieces_bitmask()[0]);
+
     EXPECT_TRUE(manager->verify_hash(0));
     EXPECT_TRUE(manager->read_piece(0).is_valid);
+    EXPECT_EQ(
+        manager->pieces_bitmask(),
+        (std::vector<bool>{true, false, false})
+    );
 }
 
+// TEST_F(PieceManagerTest, VerifyHashRejectsCorruptedPiece){
+//     manager->add_piece(0, std::vector<char>{'a', 'b', 'c', 'd'});
+//     ASSERT_TRUE(manager->verify_hash(0));
+
+//     std::array<char, 1> corrupted{'X'};
+//     manager->update_piece(0, 0, std::span<char>{corrupted}, false);
+
+//     EXPECT_FALSE(manager->verify_hash(0));
+//     EXPECT_FALSE(manager->read_piece(0).is_valid);
+// }
 TEST_F(PieceManagerTest, VerifyHashRejectsCorruptedPiece){
     manager->add_piece(0, std::vector<char>{'a', 'b', 'c', 'd'});
     ASSERT_TRUE(manager->verify_hash(0));
+    ASSERT_TRUE(manager->pieces_bitmask()[0]);
 
     std::array<char, 1> corrupted{'X'};
     manager->update_piece(0, 0, std::span<char>{corrupted}, false);
 
     EXPECT_FALSE(manager->verify_hash(0));
     EXPECT_FALSE(manager->read_piece(0).is_valid);
+    EXPECT_EQ(
+        manager->pieces_bitmask(),
+        (std::vector<bool>{false, false, false})
+    );
 }
 
 TEST_F(PieceManagerTest, UpdatePieceRejectsOutOfBoundsWrite){
@@ -192,23 +221,46 @@ TEST_F(PieceManagerTest, UpdatePieceRejectsOutOfBoundsWrite){
     );
 }
 
+// TEST_F(PieceManagerTest, StoresDropsAndReloadsPiece){
+//     const std::vector<char> expected{'a', 'b', 'c', 'd'};
+
+//     manager->add_piece(0, expected);
+//     ASSERT_TRUE(manager->verify_hash(0));
+
+//     manager->store_piece(0);
+//     ASSERT_TRUE(manager->read_piece(0).is_stored);
+
+//     EXPECT_EQ(manager->drop_piece(0), expected);
+//     EXPECT_FALSE(manager->read_piece(0).is_loaded);
+
+//     EXPECT_TRUE(manager->load_piece(0, std::nullopt));
+
+//     const auto& piece = manager->read_piece(0);
+//     EXPECT_TRUE(piece.is_loaded);
+//     EXPECT_EQ(piece.data, expected);
+// }
+
 TEST_F(PieceManagerTest, StoresDropsAndReloadsPiece){
     const std::vector<char> expected{'a', 'b', 'c', 'd'};
 
     manager->add_piece(0, expected);
     ASSERT_TRUE(manager->verify_hash(0));
 
+    EXPECT_TRUE(manager->pieces_bitmask()[0]);
+
     manager->store_piece(0);
     ASSERT_TRUE(manager->read_piece(0).is_stored);
 
     EXPECT_EQ(manager->drop_piece(0), expected);
     EXPECT_FALSE(manager->read_piece(0).is_loaded);
+    EXPECT_TRUE(manager->pieces_bitmask()[0]);
 
     EXPECT_TRUE(manager->load_piece(0, std::nullopt));
 
     const auto& piece = manager->read_piece(0);
     EXPECT_TRUE(piece.is_loaded);
     EXPECT_EQ(piece.data, expected);
+    EXPECT_TRUE(manager->pieces_bitmask()[0]);
 }
 
 } // namespace

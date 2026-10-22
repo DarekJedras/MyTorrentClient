@@ -25,7 +25,8 @@ size_t calculate_piece_size(size_t idx, const TorrentFile& torrent_info){
 
 PieceManager::PieceManager(TorrentFile torrent_info, DiskStorage disk_io) : 
     _torrent_info(std::move(torrent_info)), _disk_io(std::move(disk_io)),
-    _pieces_storage(_torrent_info.pieces().length() / 20) {}
+    _pieces_storage(_torrent_info.pieces().length() / 20),
+    _pieces_bitmask(_torrent_info.pieces().length() / 20) {}
 
 const PieceObject& PieceManager::read_piece(size_t idx) const {
     return _pieces_storage.at(idx);
@@ -44,6 +45,8 @@ void PieceManager::update_piece(size_t idx, size_t offset, std::span<char> data,
         throw std::out_of_range("data exceeds given piece size");
     }
     std::memcpy(piece.data.data() + offset, data.data(), data.size());
+    piece.is_valid = false;
+    _pieces_bitmask[idx] = false;
     if (make_complete){
         piece.is_downloaded = true;
     }
@@ -60,6 +63,7 @@ bool PieceManager::verify_hash(size_t idx){
         return false;
     }
     piece.is_valid = true;
+    _pieces_bitmask[idx] = true; // index verification done at the beginning
     return true;
 }
 
