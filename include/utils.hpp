@@ -40,21 +40,23 @@ namespace torrent::utils {
         return value;
     }
 
-    // returns true if selected bit was set
-    inline bool check_bitmask(size_t idx, const std::vector<char>& bitmask){
-        return bitmask.at(idx / 8) & (1 << (idx & 0x7));
-    }
+    // Probably wont be used
 
-    // returns the previous state of changed bit (true if set)
-    inline bool set_bitmask(bool value, size_t idx, std::vector<char>& bitmask){
-        bool prev_state = bitmask.at(idx / 8) & (1 << (idx & 0x7));
-        if (value) {
-            bitmask.at(idx / 8) |= (1 << (idx & 0x7));
-        } else {
-            bitmask.at(idx / 8) &= ~(1 << (idx & 0x7));
-        }
-        return prev_state;
-    }
+    // // returns true if selected bit was set
+    // inline bool check_bitmask(size_t idx, const std::vector<char>& bitmask){
+    //     return bitmask.at(idx / 8) & (1 << (idx & 0x7));
+    // }
+
+    // // returns the previous state of changed bit (true if set)
+    // inline bool set_bitmask(bool value, size_t idx, std::vector<char>& bitmask){
+    //     bool prev_state = bitmask.at(idx / 8) & (1 << (idx & 0x7));
+    //     if (value) {
+    //         bitmask.at(idx / 8) |= (1 << (idx & 0x7));
+    //     } else {
+    //         bitmask.at(idx / 8) &= ~(1 << (idx & 0x7));
+    //     }
+    //     return prev_state;
+    // }
 
     inline std::array<char, 20> compute_sha1(std::string_view data){
         std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(
