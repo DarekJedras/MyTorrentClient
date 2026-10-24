@@ -55,13 +55,13 @@ Peer::Peer(asio::ip::tcp::socket&& socket) :
 }
 
 void Peer::disconnect(){
-    asio::post(_socket.get_executor(), [this]{
-        _socket.shutdown(asio::socket_base::shutdown_both, _ec);
-        _socket.close(_ec);
-        _ec = asio::error::not_connected;
+    asio::post(_socket.get_executor(), [self = shared_from_this()]{
+        self->_socket.shutdown(asio::socket_base::shutdown_both, self->_ec);
+        self->_socket.close(self->_ec);
+        self->_ec = asio::error::not_connected;
 
-        _sender_timer.cancel();
-        _receiver_timer.cancel();
+        self->_sender_timer.cancel();
+        self->_receiver_timer.cancel();
     });
 }
 
@@ -77,39 +77,39 @@ void Peer::store_received_msg(){
         asio::async_read(
             _socket,
             asio::buffer(buf.data(), 4),
-            [this](asio::error_code ec, size_t){
+            [self = shared_from_this()](asio::error_code ec, size_t){
                 if (ec){
-                    _ec = ec;
+                    self->_ec = ec;
                     return;
                 }
                 // keep alive messages are ignored
-                this->store_received_msg();
+                self->store_received_msg();
             }
         );
     } else if (msg_length <= buf.size() - 4){ // short msg
         asio::async_read(
             _socket,
             asio::buffer(buf.data() + 4, msg_length),
-            [this](asio::error_code ec, size_t){
+            [self = shared_from_this()](asio::error_code ec, size_t){
                 if (ec){
-                    _ec = ec;
+                    self->_ec = ec;
                     return;
                 }
-                auto& next_buf = std::get<ShortMsgBuffer>(_recv_queue.emplace_back());
+                auto& next_buf = std::get<ShortMsgBuffer>(self->_recv_queue.emplace_back());
                 asio::async_read(
-                    _socket,
+                    self->_socket,
                     asio::buffer(next_buf.data(), 4),
-                    [this](asio::error_code ec, size_t){
+                    [self](asio::error_code ec, size_t){
                         if (ec){
-                            _ec = ec;
+                            self->_ec = ec;
                             return;
                         }
-                        this->store_received_msg();
+                        self->store_received_msg();
                     }
                 );
-                if (_pending_read.has_value()){
-                    run_read_handler(_pending_read.value());
-                    _pending_read.reset();
+                if (self->_pending_read.has_value()){
+                    self->run_read_handler(self->_pending_read.value());
+                    self->_pending_read.reset();
                 }
             }
         );
@@ -120,26 +120,26 @@ void Peer::store_received_msg(){
         asio::async_read(
             _socket,
             asio::buffer(long_buffer_ptr, msg_length),
-            [this](asio::error_code ec, size_t){
+            [self = shared_from_this()](asio::error_code ec, size_t){
                 if (ec){
-                    _ec = ec;
+                    self->_ec = ec;
                     return;
                 }
-                auto& next_buf = std::get<ShortMsgBuffer>(_recv_queue.emplace_back());
+                auto& next_buf = std::get<ShortMsgBuffer>(self->_recv_queue.emplace_back());
                 asio::async_read(
-                    _socket,
+                    self->_socket,
                     asio::buffer(next_buf.data(), 4),
-                    [this](asio::error_code ec, size_t){
+                    [self](asio::error_code ec, size_t){
                         if (ec){
-                            _ec = ec;
+                            self->_ec = ec;
                             return;
                         }
-                        this->store_received_msg();
+                        self->store_received_msg();
                     }
                 );
-                if (_pending_read.has_value()){
-                    run_read_handler(_pending_read.value());
-                    _pending_read.reset();
+                if (self->_pending_read.has_value()){
+                    self->run_read_handler(self->_pending_read.value());
+                    self->_pending_read.reset();
                 }
             }
         );
@@ -147,78 +147,78 @@ void Peer::store_received_msg(){
 }
 
 void Peer::read_handshake(HandshakeHandler handler){
-    asio::post(_socket.get_executor(), [this, handler = std::move(handler)](){
-        if (_read_handshake_started){
-            if (handler) handler(_ec, {}, {}, *this, true);
+    asio::post(_socket.get_executor(), [self = shared_from_this(), handler = std::move(handler)](){
+        if (self->_read_handshake_started){
+            if (handler) handler(self->_ec, {}, {}, *self, true);
             return;
         }
-        _read_handshake_started = true;
-        auto& first_buf = std::get<ShortMsgBuffer>(_recv_queue.emplace_back());
-        auto& second_buf = std::get<ShortMsgBuffer>(_recv_queue.emplace_back());
+        self->_read_handshake_started = true;
+        auto& first_buf = std::get<ShortMsgBuffer>(self->_recv_queue.emplace_back());
+        auto& second_buf = std::get<ShortMsgBuffer>(self->_recv_queue.emplace_back());
         std::array<asio::mutable_buffer, 2> buffers{
             asio::buffer(first_buf),
             asio::buffer(second_buf.data(), 8)
         };
-        asio::async_read(_socket, buffers, [handler, this](asio::error_code ec, size_t){
+        asio::async_read(self->_socket, buffers, [handler, self = std::move(self)](asio::error_code ec, size_t){
             if (ec){
-                _ec = ec;
-                if (handler) handler(ec, {}, {}, *this, false);
+                self->_ec = ec;
+                if (handler) handler(ec, {}, {}, *self, false);
                 return;
             }
-            auto& first_buf = std::get<ShortMsgBuffer>(_recv_queue[0]);
-            auto& second_buf = std::get<ShortMsgBuffer>(_recv_queue[1]);
+            auto& first_buf = std::get<ShortMsgBuffer>(self->_recv_queue[0]);
+            auto& second_buf = std::get<ShortMsgBuffer>(self->_recv_queue[1]);
             const char* second_buf_ptr = second_buf.data();
             auto second_buf_value = utils::read_net_buffer<uint64_t>(second_buf_ptr);
             if (first_buf != PROTOCOL_HEADER || second_buf_value != 0){
-                _ec = asio::error::operation_not_supported;
-                if (handler) handler(asio::error::operation_not_supported, {}, {}, *this, false);
+                self->_ec = asio::error::operation_not_supported;
+                if (handler) handler(asio::error::operation_not_supported, {}, {}, *self, false);
                 return;
             }
             std::array<asio::mutable_buffer, 2> buffers{
                 asio::buffer(first_buf),
                 asio::buffer(second_buf)
             };
-            asio::async_read(_socket, buffers, [handler, this](asio::error_code ec, size_t){
+            asio::async_read(self->_socket, buffers, [handler, self = std::move(self)](asio::error_code ec, size_t){
                 if (ec){
-                    _ec = ec;
+                    self->_ec = ec;
                 }
-                auto& first_buf = std::get<ShortMsgBuffer>(_recv_queue[0]);
-                auto& second_buf = std::get<ShortMsgBuffer>(_recv_queue[1]);
-                if (handler) handler(ec, first_buf, second_buf, *this, false);
-                _recv_queue.clear();
-                _recv_queue.emplace_back();
-                _recv_queue_locked = false;
+                auto& first_buf = std::get<ShortMsgBuffer>(self->_recv_queue[0]);
+                auto& second_buf = std::get<ShortMsgBuffer>(self->_recv_queue[1]);
+                if (handler) handler(ec, first_buf, second_buf, *self, false);
+                self->_recv_queue.clear();
+                self->_recv_queue.emplace_back();
+                self->_recv_queue_locked = false;
                 asio::async_read(
-                    _socket,
-                    asio::buffer(std::get<ShortMsgBuffer>(_recv_queue.back()).data(), 4),
-                    [this](asio::error_code ec, size_t){
+                    self->_socket,
+                    asio::buffer(std::get<ShortMsgBuffer>(self->_recv_queue.back()).data(), 4),
+                    [self](asio::error_code ec, size_t){
                         if (ec){
-                            _ec = ec;
+                            self->_ec = ec;
                             return;
                         }
-                        this->store_received_msg();
+                        self->store_received_msg();
                     }
                 );
-                set_keep_alive_check();
+                self->set_keep_alive_check();
             });
         });
     });
 }
 
 void Peer::read_message(RecvHandler handler){
-    asio::post(_socket.get_executor(), [this, handler = std::move(handler)](){
-        if (_ec){
-            if (handler) handler(_ec, {}, *this, false);
+    asio::post(_socket.get_executor(), [self = shared_from_this(), handler = std::move(handler)](){
+        if (self->_ec){
+            if (handler) handler(self->_ec, {}, *self, false);
             return;
         }
-        if (_pending_read.has_value() || _recv_queue_locked){
-            if (handler) handler(_ec, {}, *this, true);
+        if (self->_pending_read.has_value() || self->_recv_queue_locked){
+            if (handler) handler(self->_ec, {}, *self, true);
             return;
-        } else if(_recv_queue.size() <= 1){
-            _pending_read = std::move(handler);
+        } else if(self->_recv_queue.size() <= 1){
+            self->_pending_read = std::move(handler);
             return;
         }
-        run_read_handler(handler);
+        self->run_read_handler(handler);
     });
 }
 
@@ -241,15 +241,15 @@ void Peer::send_stored_msg(){
         asio::async_write(
             _socket,
             msg_buf,
-            [this, &callback](asio::error_code ec, size_t n){
+            [self = shared_from_this(), &callback](asio::error_code ec, size_t n){
                 if (ec){
-                    _ec = ec;
+                    self->_ec = ec;
                 }
-                set_keep_alive_send(); // updates countdown to 2 min since now
+                self->set_keep_alive_send(); // updates countdown to 2 min since now
                 if (callback) callback(ec, n);
-                _send_queue.pop_front();
-                if (!_ec && !_send_queue.empty()){
-                    this->send_stored_msg();
+                self->_send_queue.pop_front();
+                if (!self->_ec && !self->_send_queue.empty()){
+                    self->send_stored_msg();
                 }
             }
         );
@@ -257,16 +257,16 @@ void Peer::send_stored_msg(){
 }
 
 void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHandler handler){
-    asio::post(_socket.get_executor(), [=, this, handler = std::move(handler)]{
-        if (_send_handshake_started){
-            if (handler) handler(_ec, *this, true);
+    asio::post(_socket.get_executor(), [info_hash, own_id, self = shared_from_this(), handler = std::move(handler)]{
+        if (self->_send_handshake_started){
+            if (handler) handler(self->_ec, *self, true);
             return;
         }
-        _send_handshake_started = true;
-        _send_queue.emplace_back();
-        _send_queue.emplace_back();
-        auto& first_buf = std::get<ShortMsgBuffer>(_send_queue[0].first);
-        auto& second_buf = std::get<ShortMsgBuffer>(_send_queue[1].first);
+        self->_send_handshake_started = true;
+        self->_send_queue.emplace_back();
+        self->_send_queue.emplace_back();
+        auto& first_buf = std::get<ShortMsgBuffer>(self->_send_queue[0].first);
+        auto& second_buf = std::get<ShortMsgBuffer>(self->_send_queue[1].first);
         first_buf = PROTOCOL_HEADER;
         second_buf = {};
         std::array<asio::const_buffer, 2> buffers{
@@ -274,31 +274,35 @@ void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHa
             asio::buffer(second_buf.data(), 8)
         };
         asio::async_write(
-            _socket,
+            self->_socket,
             buffers,
-            [handler = std::move(handler), this, info_hash, own_id](asio::error_code ec, size_t){
+            [handler = std::move(handler), self = std::move(self), info_hash, own_id](asio::error_code ec, size_t){
                 if (ec){
-                    _ec = ec;
-                    if (handler) handler(ec, *this, false);
+                    self->_ec = ec;
+                    if (handler) handler(ec, *self, false);
                     return;
                 }
-                auto& first_buf = std::get<ShortMsgBuffer>(_send_queue[0].first);
-                auto& second_buf = std::get<ShortMsgBuffer>(_send_queue[1].first);
+                auto& first_buf = std::get<ShortMsgBuffer>(self->_send_queue[0].first);
+                auto& second_buf = std::get<ShortMsgBuffer>(self->_send_queue[1].first);
                 first_buf = info_hash;
                 second_buf = own_id;
                 std::array<asio::const_buffer, 2> buffers{
                     asio::buffer(first_buf),
                     asio::buffer(second_buf)
                 };
-                asio::async_write(_socket, buffers, [this, handler = std::move(handler)](asio::error_code ec, size_t){
-                    if (ec){
-                        _ec = ec;
+                asio::async_write(
+                    self->_socket,
+                    buffers,
+                    [self = std::move(self), handler = std::move(handler)](asio::error_code ec, size_t){
+                        if (ec){
+                            self->_ec = ec;
+                        }
+                        if (handler) handler(ec, *self, false);
+                        self->_send_queue.clear();
+                        self->_send_queue_locked = false;
+                        self->set_keep_alive_send();
                     }
-                    if (handler) handler(ec, *this, false);
-                    _send_queue.clear();
-                    _send_queue_locked = false;
-                    set_keep_alive_send();
-                });
+                );
             }
         );
     });
@@ -307,113 +311,116 @@ void Peer::send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHa
 void Peer::send_message(PeerMessageType type, std::vector<char> payload, ErrorHandler handler){
     asio::post(
         _socket.get_executor(),
-        [=, this, payload = std::move(payload), handler = std::move(handler)](){
-            if (_ec){
-                if (handler) handler(_ec, *this, false);
+        [type, self = shared_from_this(), payload = std::move(payload), handler = std::move(handler)](){
+            if (self->_ec){
+                if (handler) handler(self->_ec, *self, false);
                 return;
-            } else if (_send_queue_locked){
-                if (handler) handler(_ec, *this, true);
+            } else if (self->_send_queue_locked){
+                if (handler) handler(self->_ec, *self, true);
                 return;
             }
             // if there are other messages in queue, it will be sent after them
-            bool need_send_call = _send_queue.empty();
-            auto& queue_slot = _send_queue.emplace_back();
+            bool need_send_call = self->_send_queue.empty();
+            auto& queue_slot = self->_send_queue.emplace_back();
             queue_slot.first.emplace<LongSendBuffer>(std::move(payload), std::array<char, 5>{});
             auto& [data, metadata] = std::get<LongSendBuffer>(queue_slot.first);
             char* buf_ptr = metadata.data();
             uint32_t message_length = data.size() + 1;
             utils::write_net_buffer<uint32_t>(buf_ptr, message_length);
             utils::write_net_buffer<char>(buf_ptr, std::to_underlying(type));
-            queue_slot.second = [this, handler=std::move(handler)](asio::error_code ec, size_t){
-                if (handler) handler(ec, *this, false);
+            queue_slot.second = [self, handler=std::move(handler)](asio::error_code ec, size_t){
+                if (handler) handler(ec, *self, false);
             };
             if (need_send_call){
-                send_stored_msg();
+                self->send_stored_msg();
             }
         }
     );
 }
 
 void Peer::send_message(PeerMessageType type, std::array<char, 12> payload, ErrorHandler handler){
-    asio::post(_socket.get_executor(), [=, this, handler = std::move(handler)](){
-        if (_ec){
-            if (handler) handler(_ec, *this, false);
-            return;
-        } else if (_send_queue_locked){
-            if (handler) handler(_ec, *this, true);
-            return;
+    asio::post(
+        _socket.get_executor(),
+        [type, payload, self = shared_from_this(), handler = std::move(handler)](){
+            if (self->_ec){
+                if (handler) handler(self->_ec, *self, false);
+                return;
+            } else if (self->_send_queue_locked){
+                if (handler) handler(self->_ec, *self, true);
+                return;
+            }
+            // if there are other messages in queue, it will be sent after them
+            bool need_send_call = self->_send_queue.empty();
+            auto& queue_slot = self->_send_queue.emplace_back();
+            auto& buf = std::get<ShortMsgBuffer>(queue_slot.first);
+            char* buf_ptr = buf.data();
+            uint32_t message_length = deduce_msg_length(type);
+            utils::write_net_buffer<uint32_t>(buf_ptr, message_length);
+            utils::write_net_buffer<char>(buf_ptr, std::to_underlying(type));
+            std::memcpy(buf_ptr, payload.data(), message_length-1);
+            queue_slot.second = [self, handler=std::move(handler)](asio::error_code ec, size_t){
+                if (handler) handler(ec, *self, false);
+            };
+            if (need_send_call){
+                self->send_stored_msg();
+            }
         }
-        // if there are other messages in queue, it will be sent after them
-        bool need_send_call = _send_queue.empty();
-        auto& queue_slot = _send_queue.emplace_back();
-        auto& buf = std::get<ShortMsgBuffer>(queue_slot.first);
-        char* buf_ptr = buf.data();
-        uint32_t message_length = deduce_msg_length(type);
-        utils::write_net_buffer<uint32_t>(buf_ptr, message_length);
-        utils::write_net_buffer<char>(buf_ptr, std::to_underlying(type));
-        std::memcpy(buf_ptr, payload.data(), message_length-1);
-        queue_slot.second = [this, handler=std::move(handler)](asio::error_code ec, size_t){
-            if (handler) handler(ec, *this, false);
-        };
-        if (need_send_call){
-            send_stored_msg();
-        }
-    });
+    );
 }
 
 void Peer::set_interested(bool value, ErrorHandler handler){
-    asio::post(_socket.get_executor(), [this, value, handler = std::move(handler)](){
-        if (_ec){
-            if (handler) handler(_ec, *this, false);
+    asio::post(_socket.get_executor(), [self = shared_from_this(), value, handler = std::move(handler)](){
+        if (self->_ec){
+            if (handler) handler(self->_ec, *self, false);
             return;
-        } else if (_send_queue_locked){
-            if (handler) handler(_ec, *this, true);
+        } else if (self->_send_queue_locked){
+            if (handler) handler(self->_ec, *self, true);
             return;
         }
         // if there are other messages in queue, it will be sent after them
-        bool need_send_call = _send_queue.empty();
-        auto& queue_slot = _send_queue.emplace_back();
+        bool need_send_call = self->_send_queue.empty();
+        auto& queue_slot = self->_send_queue.emplace_back();
         auto& buf = std::get<ShortMsgBuffer>(queue_slot.first);
         char* buf_ptr = buf.data();
         utils::write_net_buffer<uint32_t>(buf_ptr, 1);
         *buf_ptr = std::to_underlying(value ? PeerMessageType::INTERESTED : PeerMessageType::NOT_INTERESTED);
-        queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t){
+        queue_slot.second = [self, value, handler = std::move(handler)](asio::error_code ec, size_t){
             if (!ec){
-                _am_interested = value;
+                self->_am_interested = value;
             }
-            if (handler) handler(ec, *this, false);
+            if (handler) handler(ec, *self, false);
             return;
         };
         if (need_send_call){
-            send_stored_msg();
+            self->send_stored_msg();
         }
     });
 }
 
 void Peer::set_choked(bool value, ErrorHandler handler){
-    asio::post(_socket.get_executor(), [this, value, handler = std::move(handler)](){
-        if (_ec){
-            if (handler) handler(_ec, *this, false);
+    asio::post(_socket.get_executor(), [self = shared_from_this(), value, handler = std::move(handler)](){
+        if (self->_ec){
+            if (handler) handler(self->_ec, *self, false);
             return;
-        } else if (_send_queue_locked){
-            if (handler) handler(_ec, *this, true);
+        } else if (self->_send_queue_locked){
+            if (handler) handler(self->_ec, *self, true);
             return;
         }
         // if there are other messages in queue, it will be sent after them
-        bool need_send_call = _send_queue.empty();
-        auto& queue_slot = _send_queue.emplace_back();
+        bool need_send_call = self->_send_queue.empty();
+        auto& queue_slot = self->_send_queue.emplace_back();
         auto& buf = std::get<ShortMsgBuffer>(queue_slot.first);
         char* buf_ptr = buf.data();
         utils::write_net_buffer<uint32_t>(buf_ptr, 1);
         *buf_ptr = std::to_underlying(value ? PeerMessageType::CHOKE : PeerMessageType::UNCHOKE);
-        queue_slot.second = [this, value, handler = std::move(handler)](asio::error_code ec, size_t){
+        queue_slot.second = [self, value, handler = std::move(handler)](asio::error_code ec, size_t){
             if (!ec){
-                _is_choked = value;
+                self->_is_choked = value;
             }
-            if (handler) handler(ec, *this, false);
+            if (handler) handler(ec, *self, false);
         };
         if (need_send_call){
-            send_stored_msg();
+            self->send_stored_msg();
         }
     });
 }
@@ -457,36 +464,36 @@ void Peer::run_read_handler(const RecvHandler& handler){
 
 void Peer::set_keep_alive_send(){
     _sender_timer.expires_after(2min);
-    _sender_timer.async_wait([this](asio::error_code ec){
+    _sender_timer.async_wait([self = shared_from_this()](asio::error_code ec){
         if (ec == asio::error::operation_aborted){
             return;
         } else if (ec){
-            if (!_ec){
-                _ec = ec;
+            if (!self->_ec){
+                self->_ec = ec;
             }
             return;
         }
-        if (_send_queue.empty()){
-            auto& buf = std::get<ShortMsgBuffer>(_send_queue.emplace_back().first);
+        if (self->_send_queue.empty()){
+            auto& buf = std::get<ShortMsgBuffer>(self->_send_queue.emplace_back().first);
             char* buf_ptr = buf.data();
             utils::write_net_buffer<uint32_t>(buf_ptr, 0);
-            send_stored_msg();
+            self->send_stored_msg();
         }
     });
 }
 
 void Peer::set_keep_alive_check(){
     _receiver_timer.expires_after(4min);
-    _receiver_timer.async_wait([this](asio::error_code ec){
+    _receiver_timer.async_wait([self = shared_from_this()](asio::error_code ec){
         if (ec == asio::error::operation_aborted){
             return;
         } else if (ec){
-            if (!_ec){
-                _ec = ec;
+            if (!self->_ec){
+                self->_ec = ec;
             }
             return;
         }
-        _ec = asio::error::timed_out;
+        self->_ec = asio::error::timed_out;
     });
 }
 

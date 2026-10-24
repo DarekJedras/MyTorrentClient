@@ -36,7 +36,8 @@ enum class PeerMessageType : char {
 
 struct PeerMessage;
 
-class Peer {
+// Peer should only be created as a shared pointer
+class Peer : public std::enable_shared_from_this<Peer> {
     // all handlers should check whether error occured and behave accordingly
 public:
     using RecvHandler = std::function<void(asio::error_code, PeerMessage, Peer&, bool handler_ignored)>;

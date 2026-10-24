@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 #include "peer.hpp"
 #include "asio.hpp"
-
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -24,7 +23,7 @@ protected:
     asio::io_context io;
     tcp::acceptor acceptor{io, tcp::endpoint(tcp::v4(), 0)};
     tcp::socket client{io};
-    std::unique_ptr<Peer> peer;
+    std::shared_ptr<Peer> peer;
 
     void connect_peer(){
         client.connect(acceptor.local_endpoint());
@@ -32,7 +31,7 @@ protected:
         tcp::socket server{io};
         acceptor.accept(server);
 
-        peer = std::make_unique<Peer>(std::move(server));
+        peer = std::make_shared<Peer>(std::move(server));
     }
 
     template <typename Predicate>
@@ -912,12 +911,12 @@ TEST_F(PeerTest, UnconnectedPeerReturnsError){
     asio::io_context local_io;
     tcp::socket socket{local_io};
 
-    Peer unconnected_peer(std::move(socket));
+    std::shared_ptr<Peer> unconnected_peer = std::make_shared<Peer>(std::move(socket));
 
     bool done = false;
     asio::error_code result;
 
-    unconnected_peer.read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
+    unconnected_peer->read_message([&](asio::error_code ec, PeerMessage, Peer&, bool ignored){
         result = ec;
         EXPECT_FALSE(ignored);
         done = true;
@@ -974,6 +973,53 @@ TEST_F(PeerTest, DisconnectInReadHandler){
 
     run_until([&] { return next_done; });
     EXPECT_TRUE(next_done);
+}
+
+// ============================================================================
+// LIFETIME TESTS
+// ============================================================================
+
+TEST_F(PeerTest, PeerIsReleasedAfterHandshakeError){
+    connect_peer();
+
+    std::weak_ptr<Peer> weak = peer;
+    bool handler_called = false;
+
+    peer->read_handshake(
+        [&](asio::error_code ec, const auto&, const auto&, Peer&, bool ignored) {
+            EXPECT_TRUE(ec);
+            EXPECT_FALSE(ignored);
+            handler_called = true;
+        }
+    );
+
+    peer.reset();
+
+    asio::error_code ignored;
+    client.close(ignored);
+
+    run_until([&] {
+        return weak.expired();
+    });
+
+    EXPECT_TRUE(handler_called);
+    EXPECT_TRUE(weak.expired());
+}
+
+TEST_F(PeerTest, PeerIsReleasedAfterDisconnect){
+    connect_peer();
+    do_handshake();
+
+    std::weak_ptr<Peer> weak = peer;
+
+    peer->disconnect();
+    peer.reset();
+
+    run_until([&] {
+        return weak.expired();
+    });
+
+    EXPECT_TRUE(weak.expired());
 }
 
 } // namespace
