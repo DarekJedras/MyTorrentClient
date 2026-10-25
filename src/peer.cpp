@@ -62,6 +62,9 @@ void Peer::disconnect(){
 
         self->_sender_timer.cancel();
         self->_receiver_timer.cancel();
+        self->_send_queue.clear();
+        self->_recv_queue.clear();
+        self->_pending_read.reset();
     });
 }
 
