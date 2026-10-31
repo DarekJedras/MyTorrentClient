@@ -7,6 +7,9 @@
 #include <fstream>
 #include <optional>
 #include <filesystem>
+#include <map>
+#include <set>
+#include <utility>
 #include "torrent_file.hpp"
 
 namespace torrent {
@@ -37,13 +40,27 @@ struct PieceObject {
 };
 
 class PieceManager {
+public:
+    enum class RangeState {
+        REQUESTED,
+        RECEIVED
+    };
+    // [begin, end) range represented as [range begin] -> ([range end], [range state])
+    using PieceRanges = std::map<size_t, std::pair<size_t, RangeState>>;
+
+private:
     TorrentFile _torrent_info;
     DiskStorage _disk_io;
     std::vector<PieceObject> _pieces_storage;
     std::vector<bool> _pieces_bitmask;
+    std::map<size_t, PieceRanges> _pieces_in_progress;
 
 public:
     PieceManager(TorrentFile torrent, DiskStorage disk_io);
+
+    const std::vector<bool>& pieces_bitmask() const {return _pieces_bitmask;}
+
+    const std::map<size_t, PieceRanges>& pieces_in_progress() const {return _pieces_in_progress;}
 
     // returns reference to stored piece object
     const PieceObject& read_piece(size_t idx) const;
@@ -55,7 +72,12 @@ public:
 
     // sets given vector as data container for selected piece (resizes it if necessary)
     void add_piece(size_t idx, std::vector<char> piece);
-    void update_piece(size_t idx, size_t offset, std::span<char> data, bool make_complete);
+    // writes given data block at given offset in requested piece,
+    // doesn't modify data if same range wasn't previously marked as requested
+    const PieceObject& update_piece(size_t idx, size_t offset, std::span<char> data);
+
+    // marks requested data block (bytes range) as requested from peer
+    void mark_block_requested(size_t idx, size_t offset, size_t length);
 
     // returns piece container (containing current piece data) and sets piece's data container empty
     std::vector<char> drop_piece(size_t idx);
@@ -64,8 +86,6 @@ public:
 
     // returns true if hash verification completed succesfully
     bool verify_hash(size_t idx);
-
-    const std::vector<bool>& pieces_bitmask() const {return _pieces_bitmask;}
 };
 
 } // namespace torrent
