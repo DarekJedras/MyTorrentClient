@@ -9,6 +9,7 @@
 #include <array>
 #include <deque>
 #include <span>
+#include <atomic>
 #include "asio.hpp"
 #include "torrent_file.hpp"
 
@@ -70,11 +71,11 @@ private:
     bool _read_handshake_started = false;
 
     // protocol specified state
-    bool _am_choked = true;
-    bool _am_interested = false;
+    std::atomic<bool> _am_choked = true;
+    std::atomic<bool> _am_interested = false;
 
-    bool _is_choked = true;
-    bool _is_interested = false;
+    std::atomic<bool> _is_choked = true;
+    std::atomic<bool> _is_interested = false;
 
     // designed to be called inside execution context (as tasks or callbacks)
     void store_received_msg();
@@ -92,13 +93,10 @@ public:
     void read_handshake(HandshakeHandler handler);
     void send_handshake(const Hash20& info_hash, const Hash20& own_id, ErrorHandler handler);
 
-    // not thread-safe, should only be called inside handlers
     bool am_interested() const {return _am_interested;}
-    // not thread-safe, should only be called inside handlers
     bool am_choked() const {return _am_choked;}
-    // not thread-safe, should only be called inside handlers
+
     bool is_choked() const {return _is_choked;}
-    // not thread-safe, should only be called inside handlers
     bool is_interested() const {return _is_interested;}
 
     void set_interested(bool value, ErrorHandler handler);
