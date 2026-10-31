@@ -184,24 +184,21 @@ TEST_F(PieceManagerTest, VerifiesCorrectPieceHash){
     );
 }
 
-// TEST_F(PieceManagerTest, VerifyHashRejectsCorruptedPiece){
-//     manager->add_piece(0, std::vector<char>{'a', 'b', 'c', 'd'});
-//     ASSERT_TRUE(manager->verify_hash(0));
+TEST_F(PieceManagerTest, VerifyHashRejectsCorruptedPiece) {
+    std::array<char, 4> valid_data{'a', 'b', 'c', 'd'};
 
-//     std::array<char, 1> corrupted{'X'};
-//     manager->update_piece(0, 0, std::span<char>{corrupted}, false);
+    manager->add_piece(0, std::vector<char>());
+    manager->mark_block_requested(0, 0, valid_data.size());
+    manager->update_piece(0, 0, std::span<char>{valid_data});
 
-//     EXPECT_FALSE(manager->verify_hash(0));
-//     EXPECT_FALSE(manager->read_piece(0).is_valid);
-// }
-TEST_F(PieceManagerTest, VerifyHashRejectsCorruptedPiece){
-    manager->add_piece(0, std::vector<char>{'a', 'b', 'c', 'd'});
+    ASSERT_TRUE(manager->read_piece(0).is_downloaded);
     ASSERT_TRUE(manager->verify_hash(0));
-    ASSERT_TRUE(manager->pieces_bitmask()[0]);
 
-    std::array<char, 1> corrupted{'X'};
-    manager->update_piece(0, 0, std::span<char>{corrupted}, false);
+    std::array<char, 4> corrupted{'X', 'b', 'c', 'd'};
+    manager->mark_block_requested(0, 0, corrupted.size());
+    manager->update_piece(0, 0, std::span<char>{corrupted});
 
+    ASSERT_TRUE(manager->read_piece(0).is_downloaded);
     EXPECT_FALSE(manager->verify_hash(0));
     EXPECT_FALSE(manager->read_piece(0).is_valid);
     EXPECT_EQ(
@@ -216,29 +213,11 @@ TEST_F(PieceManagerTest, UpdatePieceRejectsOutOfBoundsWrite){
     std::array<char, 2> patch{'X', 'Y'};
 
     EXPECT_THROW(
-        manager->update_piece(0, 3, std::span<char>{patch}, false),
+        manager->update_piece(0, 3, std::span<char>{patch}),
         std::out_of_range
     );
 }
 
-// TEST_F(PieceManagerTest, StoresDropsAndReloadsPiece){
-//     const std::vector<char> expected{'a', 'b', 'c', 'd'};
-
-//     manager->add_piece(0, expected);
-//     ASSERT_TRUE(manager->verify_hash(0));
-
-//     manager->store_piece(0);
-//     ASSERT_TRUE(manager->read_piece(0).is_stored);
-
-//     EXPECT_EQ(manager->drop_piece(0), expected);
-//     EXPECT_FALSE(manager->read_piece(0).is_loaded);
-
-//     EXPECT_TRUE(manager->load_piece(0, std::nullopt));
-
-//     const auto& piece = manager->read_piece(0);
-//     EXPECT_TRUE(piece.is_loaded);
-//     EXPECT_EQ(piece.data, expected);
-// }
 
 TEST_F(PieceManagerTest, StoresDropsAndReloadsPiece){
     const std::vector<char> expected{'a', 'b', 'c', 'd'};

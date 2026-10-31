@@ -7,6 +7,7 @@
 #include <vector>
 #include <span>
 #include <iostream>
+#include <iterator>
 #include "utils.hpp"
 
 namespace torrent {
@@ -61,11 +62,9 @@ const PieceObject& PieceManager::update_piece(
     }
 
     auto& piece_ranges = ranges_it->second;
-
     const size_t end = offset + data.size();
 
     auto it = piece_ranges.find(offset);
-
     if (it == piece_ranges.end()
         || it->second.first != end
         || it->second.second != RangeState::REQUESTED
@@ -75,13 +74,11 @@ const PieceObject& PieceManager::update_piece(
 
     // copy received data
     std::memcpy(piece.data.data() + offset, data.data(), data.size());
-
     // mark range as received
     it->second.second = RangeState::RECEIVED;
 
     // merge with previous range
     auto merged_it = it;
-
     if (merged_it != piece_ranges.begin()) {
         auto prev_it = std::prev(merged_it);
 
@@ -96,7 +93,6 @@ const PieceObject& PieceManager::update_piece(
 
     // merge with next range
     auto next_it = std::next(merged_it);
-
     if (next_it != piece_ranges.end()
         && merged_it->second.first == next_it->first
         && next_it->second.second == RangeState::RECEIVED
@@ -107,6 +103,7 @@ const PieceObject& PieceManager::update_piece(
 
     piece.is_valid = false;
     _pieces_bitmask[idx] = false;
+    piece.is_downloaded = false;
 
     // check whether the entire piece has been downloaded
     auto first = piece_ranges.begin();
@@ -123,7 +120,7 @@ const PieceObject& PieceManager::update_piece(
 }
 
 void PieceManager::mark_block_requested(size_t idx, size_t offset, size_t length){
-    PieceRanges ranges = _pieces_in_progress[idx];
+    PieceRanges& ranges = _pieces_in_progress[idx];
     // ranges should be checked against overlapping
     ranges[offset] = {offset + length, RangeState::REQUESTED};
 }
@@ -136,6 +133,7 @@ bool PieceManager::verify_hash(size_t idx){
     Hash20 current_hash = utils::compute_sha1(std::string_view(piece.data.data(), piece.data.size()));
     if (std::memcmp(expected_hash_ptr, current_hash.data(), current_hash.size()) != 0){
         piece.is_valid = false;
+        _pieces_bitmask[idx] = false;
         return false;
     }
     piece.is_valid = true;
